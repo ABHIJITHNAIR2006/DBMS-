@@ -1,0 +1,283 @@
+/* Claymorphism Design System Tokens & Utilities for ClayStock */
+
+:root, [data-theme="light"] {
+  --clay-bg-start: #EEF1FF;
+  --clay-bg-end: #F8F4FF;
+  --clay-bg: #F0F2FD;
+  --clay-surface: #F6F7FF;
+  --clay-surface-subtle: #ECEEFA;
+  --clay-surface-elevated: #FFFFFF;
+  --clay-text: #1F1B3D;
+  --clay-text-muted: #535275;
+  --clay-text-faint: #8180A0;
+  --clay-border: rgba(160, 168, 218, 0.35);
+
+  /* Accents */
+  --clay-accent-periwinkle: #6B74FF;
+  --clay-accent-mint: #2DBE95;
+  --clay-accent-peach: #FA7952;
+  --clay-accent-sunshine: #F5BC38;
+  --clay-accent-rose: #F05583;
+  --clay-accent-blue: #3E8BFF;
+
+  /* Accent Text (guaranteed WCAG AA 4.5:1 on light surfaces) */
+  --clay-on-mint: #0E5E48;
+  --clay-on-peach: #842B10;
+  --clay-on-sunshine: #7A5300;
+  --clay-on-rose: #8C143B;
+  --clay-on-periwinkle: #FFFFFF;
+
+  /* Shadows for Clay Depth */
+  --clay-shadow-dark: rgba(110, 115, 185, 0.30);
+  --clay-shadow-light: #FFFFFF;
+  --clay-inner-highlight: rgba(255, 255, 255, 0.85);
+  --clay-inner-shade: rgba(115, 120, 190, 0.22);
+  --clay-input-inset-dark: rgba(100, 105, 175, 0.28);
+  --clay-input-inset-light: rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="dark"] {
+  --clay-bg-start: #121124;
+  --clay-bg-end: #1B1933;
+  --clay-bg: #151428;
+  --clay-surface: #222042;
+  --clay-surface-subtle: #1C1B37;
+  --clay-surface-elevated: #2B2852;
+  --clay-text: #F6F5FF;
+  --clay-text-muted: #BCB9E4;
+  --clay-text-faint: #8784B2;
+  --clay-border: rgba(120, 115, 180, 0.25);
+
+  /* Accents slightly more vibrant for dark theme */
+  --clay-accent-periwinkle: #8E94FF;
+  --clay-accent-mint: #4AE0B7;
+  --clay-accent-peach: #FFA180;
+  --clay-accent-sunshine: #FFDB78;
+  --clay-accent-rose: #FFA0BC;
+  --clay-accent-blue: #66A6FF;
+
+  /* Accent Text on dark tags */
+  --clay-on-mint: #023829;
+  --clay-on-peach: #4A1605;
+  --clay-on-sunshine: #452E00;
+  --clay-on-rose: #4A051C;
+  --clay-on-periwinkle: #151433;
+
+  /* Dark shadows */
+  --clay-shadow-dark: rgba(5, 4, 15, 0.70);
+  --clay-shadow-light: rgba(255, 255, 255, 0.05);
+  --clay-inner-highlight: rgba(255, 255, 255, 0.12);
+  --clay-inner-shade: rgba(0, 0, 0, 0.55);
+  --clay-input-inset-dark: rgba(0, 0, 0, 0.65);
+  --clay-input-inset-light: rgba(255, 255, 255, 0.04);
+}
+
+body {
+  font-family: 'Nunito', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  background: linear-gradient(135deg, var(--clay-bg-start) 0%, var(--clay-bg-end) 100%);
+  background-attachment: fixed;
+  color: var(--clay-text);
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: 'Fredoka', 'Nunito', sans-serif;
+}
+
+/* Clay Card */
+.clay-card {
+  background: var(--clay-surface);
+  border-radius: 28px;
+  box-shadow: 
+    14px 14px 28px var(--clay-shadow-dark),
+    -10px -10px 24px var(--clay-shadow-light),
+    inset 4px 4px 10px var(--clay-inner-highlight),
+    inset -4px -4px 10px var(--clay-inner-shade);
+  border: 1px solid var(--clay-border);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s ease;
+}
+
+.clay-card-flat {
+  background: var(--clay-surface);
+  border-radius: 24px;
+  box-shadow: 
+    8px 8px 18px var(--clay-shadow-dark),
+    -6px -6px 14px var(--clay-shadow-light),
+    inset 3px 3px 6px var(--clay-inner-highlight),
+    inset -3px -3px 6px var(--clay-inner-shade);
+  border: 1px solid var(--clay-border);
+}
+
+/* Inset clay well (for inputs, wells, display panes) */
+.clay-inset {
+  background: var(--clay-surface-subtle);
+  border-radius: 20px;
+  box-shadow: 
+    inset 5px 5px 12px var(--clay-input-inset-dark),
+    inset -4px -4px 10px var(--clay-input-inset-light);
+  border: 1px solid var(--clay-border);
+}
+
+/* Interactive Clay Button */
+.clay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  border-radius: 9999px;
+  padding: 0.75rem 1.5rem;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+  user-select: none;
+  border: none;
+  outline: none;
+}
+
+.clay-btn:active {
+  transform: scale(0.96);
+}
+
+/* Primary Button (Periwinkle Gradient) */
+.clay-btn-primary {
+  background: linear-gradient(135deg, #7C85FF 0%, #5E69F6 100%);
+  color: #FFFFFF;
+  box-shadow: 
+    0 10px 22px rgba(94, 105, 246, 0.42),
+    inset 2px 2px 5px rgba(255, 255, 255, 0.5),
+    inset -3px -3px 6px rgba(40, 45, 140, 0.4);
+}
+.clay-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 14px 28px rgba(94, 105, 246, 0.5),
+    inset 2px 2px 6px rgba(255, 255, 255, 0.6),
+    inset -3px -3px 7px rgba(40, 45, 140, 0.45);
+}
+
+/* Mint Button */
+.clay-btn-mint {
+  background: linear-gradient(135deg, #42E4B8 0%, #20BF94 100%);
+  color: #033628;
+  box-shadow: 
+    0 10px 22px rgba(32, 191, 148, 0.38),
+    inset 2px 2px 5px rgba(255, 255, 255, 0.6),
+    inset -3px -3px 6px rgba(10, 100, 75, 0.35);
+}
+.clay-btn-mint:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 14px 28px rgba(32, 191, 148, 0.48),
+    inset 2px 2px 6px rgba(255, 255, 255, 0.7),
+    inset -3px -3px 7px rgba(10, 100, 75, 0.4);
+}
+
+/* Peach Button */
+.clay-btn-peach {
+  background: linear-gradient(135deg, #FF9C7D 0%, #FA6B40 100%);
+  color: #FFFFFF;
+  box-shadow: 
+    0 10px 22px rgba(250, 107, 64, 0.38),
+    inset 2px 2px 5px rgba(255, 255, 255, 0.6),
+    inset -3px -3px 6px rgba(140, 40, 15, 0.35);
+}
+.clay-btn-peach:hover {
+  transform: translateY(-2px);
+}
+
+/* Secondary Button (Clay Surface) */
+.clay-btn-secondary {
+  background: var(--clay-surface);
+  color: var(--clay-text);
+  box-shadow: 
+    6px 6px 14px var(--clay-shadow-dark),
+    -4px -4px 10px var(--clay-shadow-light),
+    inset 2px 2px 5px var(--clay-inner-highlight),
+    inset -2px -2px 5px var(--clay-inner-shade);
+  border: 1px solid var(--clay-border);
+}
+.clay-btn-secondary:hover {
+  transform: translateY(-2px);
+  color: var(--clay-accent-periwinkle);
+}
+
+/* Danger Button */
+.clay-btn-danger {
+  background: linear-gradient(135deg, #FF6685 0%, #E8365D 100%);
+  color: #FFFFFF;
+  box-shadow: 
+    0 8px 18px rgba(232, 54, 93, 0.38),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.5),
+    inset -2px -2px 4px rgba(130, 20, 40, 0.4);
+}
+
+/* Inset Clay Input */
+.clay-input {
+  background: var(--clay-surface-subtle);
+  color: var(--clay-text);
+  border-radius: 18px;
+  padding: 0.75rem 1.15rem;
+  box-shadow: 
+    inset 4px 4px 8px var(--clay-input-inset-dark),
+    inset -3px -3px 6px var(--clay-input-inset-light);
+  border: 1px solid var(--clay-border);
+  outline: none;
+  transition: all 0.2s ease;
+}
+.clay-input:focus {
+  border-color: var(--clay-accent-periwinkle);
+  box-shadow: 
+    inset 4px 4px 8px var(--clay-input-inset-dark),
+    inset -3px -3px 6px var(--clay-input-inset-light),
+    0 0 0 3px rgba(124, 131, 255, 0.28);
+}
+.clay-input::placeholder {
+  color: var(--clay-text-faint);
+}
+
+/* Clay Badges / Chips */
+.clay-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  box-shadow: 
+    4px 4px 8px var(--clay-shadow-dark),
+    -3px -3px 6px var(--clay-shadow-light),
+    inset 1px 1px 3px var(--clay-inner-highlight),
+    inset -1px -1px 3px var(--clay-inner-shade);
+  border: 1px solid var(--clay-border);
+}
+
+/* Puffy Icon Circle */
+.clay-icon-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  box-shadow: 
+    5px 5px 12px var(--clay-shadow-dark),
+    -4px -4px 10px var(--clay-shadow-light),
+    inset 2px 2px 4px var(--clay-inner-highlight),
+    inset -2px -2px 4px var(--clay-inner-shade);
+  border: 1px solid var(--clay-border);
+}
+
+/* Custom Clay Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--clay-surface-subtle);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--clay-accent-periwinkle);
+  border-radius: 10px;
+  border: 2px solid var(--clay-surface-subtle);
+}

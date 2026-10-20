@@ -1,0 +1,8 @@
+{
+  "name": "ClayStock - Stationery Management System",
+  "description": "DBMS Mini Project: A centralized relational stationery management system with 3NF database design, inventory tracking, purchase recording, department distribution, and 3D claymorphic UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

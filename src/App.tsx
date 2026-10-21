@@ -51,10 +51,14 @@ function AppContent() {
 
   // Check if first-run tour has been shown
   useEffect(() => {
-    const hasSeenTour = localStorage.getItem('claystock_has_seen_tour');
-    if (!hasSeenTour) {
-      setIsTourOpen(true);
-      localStorage.setItem('claystock_has_seen_tour', 'true');
+    try {
+      const hasSeenTour = localStorage.getItem('claystock_has_seen_tour');
+      if (!hasSeenTour) {
+        setIsTourOpen(true);
+        localStorage.setItem('claystock_has_seen_tour', 'true');
+      }
+    } catch {
+      // storage blocked
     }
   }, []);
 

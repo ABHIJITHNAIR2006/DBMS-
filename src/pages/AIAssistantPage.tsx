@@ -119,7 +119,7 @@ export const AIAssistantPage: React.FC = () => {
             <h1 className="text-2xl sm:text-3xl font-extrabold font-display text-clay-text">
               AI Database Assistant & Viva Tutor
             </h1>
-            <ClayChip label="Gemini 3.8 Flash" variant="periwinkle" />
+            <ClayChip label="Gemini Flash" variant="periwinkle" />
           </div>
           <p className="text-xs sm:text-sm text-clay-text-muted mt-1">
             Grounded in the 10-table 3NF relational schema and real-time database state

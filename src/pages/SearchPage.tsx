@@ -62,7 +62,10 @@ export const SearchPage: React.FC<SearchPageProps> = ({
 
       // Auto-apply structured filters
       if (result.categories && result.categories.length > 0) {
-        setSelectedCategory(result.categories[0]);
+        const matched = availableCategories.find(
+          c => c.toLowerCase() === result.categories[0].toLowerCase()
+        );
+        setSelectedCategory(matched || result.categories[0]);
       }
       if (result.type && result.type !== 'All') {
         setSelectedType(result.type);

@@ -47,14 +47,22 @@ export const DBProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Theme state
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('claystock_theme');
-    if (saved === 'light' || saved === 'dark') return saved;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    try {
+      const saved = localStorage.getItem('claystock_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
   });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('claystock_theme', theme);
+    try {
+      localStorage.setItem('claystock_theme', theme);
+    } catch {
+      // storage blocked
+    }
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

@@ -50,14 +50,36 @@ export const DatabaseLabPage: React.FC = () => {
   const [isExplaining, setIsExplaining] = useState(false);
 
   // Editable Student details for Project Cover
-  const [studentName, setStudentName] = useState(() => localStorage.getItem('claystock_student_name') || '[Student Name]');
-  const [studentClass, setStudentClass] = useState(() => localStorage.getItem('claystock_student_class') || '[Class]');
-  const [studentRoll, setStudentRoll] = useState(() => localStorage.getItem('claystock_student_roll') || '[Roll No]');
+  const [studentName, setStudentName] = useState(() => {
+    try {
+      return localStorage.getItem('claystock_student_name') || '[Student Name]';
+    } catch {
+      return '[Student Name]';
+    }
+  });
+  const [studentClass, setStudentClass] = useState(() => {
+    try {
+      return localStorage.getItem('claystock_student_class') || '[Class]';
+    } catch {
+      return '[Class]';
+    }
+  });
+  const [studentRoll, setStudentRoll] = useState(() => {
+    try {
+      return localStorage.getItem('claystock_student_roll') || '[Roll No]';
+    } catch {
+      return '[Roll No]';
+    }
+  });
 
   const handleSaveStudentDetails = () => {
-    localStorage.setItem('claystock_student_name', studentName);
-    localStorage.setItem('claystock_student_class', studentClass);
-    localStorage.setItem('claystock_student_roll', studentRoll);
+    try {
+      localStorage.setItem('claystock_student_name', studentName);
+      localStorage.setItem('claystock_student_class', studentClass);
+      localStorage.setItem('claystock_student_roll', studentRoll);
+    } catch {
+      // storage blocked
+    }
     showToast({ title: 'Saved', description: 'Academic submission details updated.', type: 'success' });
   };
 
@@ -91,8 +113,14 @@ export const DatabaseLabPage: React.FC = () => {
 
   // Copy query to clipboard
   const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    showToast({ title: 'Copied to Clipboard', type: 'info' });
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        showToast({ title: 'Copied to Clipboard', type: 'info' });
+      })
+      .catch(() => {
+        showToast({ title: 'Copy Failed', description: 'Clipboard access denied.', type: 'warning' });
+      });
   };
 
   return (

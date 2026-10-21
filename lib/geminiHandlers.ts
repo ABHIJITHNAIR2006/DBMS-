@@ -28,7 +28,7 @@ function getAiClient(): GoogleGenAI {
   });
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs = 25000, errorMsg = 'Gemini API request timed out'): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 55000, errorMsg = 'Gemini API request timed out'): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeoutPromise = new Promise<T>((_, reject) => {
     timer = setTimeout(() => {
@@ -133,7 +133,7 @@ Return a valid JSON object matching the schema.`;
         }
       }
     }),
-    25000,
+    55000,
     'Smart search timed out'
   );
 
@@ -192,7 +192,7 @@ Provide prioritized restock recommendations with suggested order quantities, sup
         }
       }
     }),
-    25000,
+    55000,
     'Restock advisor timed out'
   );
 
@@ -238,7 +238,7 @@ Existing categories to prefer: ${(Array.isArray(existingCategories) ? existingCa
         }
       }
     }),
-    25000,
+    55000,
     'Item assistant timed out'
   );
 
@@ -295,7 +295,7 @@ Explain:
       model: getModel(),
       contents: prompt
     }),
-    25000,
+    55000,
     'Database assistant timed out'
   );
 

@@ -90,10 +90,11 @@ export const AIAssistantPage: React.FC = () => {
       setMessages(prev => [...prev, aiMsg]);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'Unable to connect to AI server';
+      const cleanError = errorMsg.replace(/\.+$/, '');
       const aiErrorMsg: ChatMessage = {
         id: `ai-err-${Date.now()}`,
         sender: 'assistant',
-        text: `Notice: ${errorMsg}. Please ensure the GEMINI_API_KEY environment variable is active or check network status.`,
+        text: `Notice: ${cleanError}. Please ensure the GEMINI_API_KEY environment variable is active or check network status.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, aiErrorMsg]);

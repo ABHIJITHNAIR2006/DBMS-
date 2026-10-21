@@ -11,12 +11,15 @@ import {
   dbAssistant,
   HttpError,
   getModel
-} from './lib/geminiHandlers';
-
-dotenv.config();
+} from './lib/geminiHandlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ override: true });
+if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'MY_GEMINI_API_KEY') {
+  dotenv.config({ path: path.resolve(__dirname, '.env.example'), override: true });
+}
 
 const app = express();
 // Port 3000 is required by AI Studio environment and nginx reverse proxy

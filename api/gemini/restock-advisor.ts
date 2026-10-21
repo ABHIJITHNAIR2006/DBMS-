@@ -1,4 +1,4 @@
-import { restockAdvisor } from '../../lib/geminiHandlers';
-import { postHandler } from '../../lib/vercelWrap';
+import { restockAdvisor } from '../../lib/geminiHandlers.js';
+import { postHandler } from '../../lib/vercelWrap.js';
 
 export default postHandler(restockAdvisor);

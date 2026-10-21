@@ -48,15 +48,19 @@ async function postJson<T>(url: string, body: unknown, fallbackError: string): P
     throw new Error('Could not reach the AI server. Check your internet connection.');
   }
 
+  const text = await res.text();
+
   if (!res.ok) {
     let serverMessage = '';
-    try {
-      const data = await res.json();
-      if (data && typeof data.error === 'string') {
-        serverMessage = data.error;
+    if (text) {
+      try {
+        const data = JSON.parse(text);
+        if (data && typeof data.error === 'string') {
+          serverMessage = data.error;
+        }
+      } catch {
+        // unreadable JSON
       }
-    } catch {
-      // unreadable JSON
     }
 
     if (serverMessage) {
@@ -69,9 +73,13 @@ async function postJson<T>(url: string, body: unknown, fallbackError: string): P
   }
 
   try {
-    return await res.json();
+    return JSON.parse(text);
   } catch {
-    throw new Error('Received unreadable response from the server.');
+    const trimmed = (text || '').trim();
+    if (trimmed.startsWith('<') || trimmed.includes('<!DOCTYPE html>')) {
+      throw new Error('API server returned HTML page instead of JSON. The backend service may still be starting up.');
+    }
+    throw new Error('Received unreadable response from the server');
   }
 }
 

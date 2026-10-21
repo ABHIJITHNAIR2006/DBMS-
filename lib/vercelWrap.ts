@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { HttpError } from './geminiHandlers';
+import { HttpError } from './geminiHandlers.js';
 
 export type VercelReq = IncomingMessage & {
   body?: any;
@@ -8,37 +8,68 @@ export type VercelReq = IncomingMessage & {
 };
 
 export type VercelRes = ServerResponse & {
-  status: (code: number) => VercelRes;
-  json: (data: any) => void;
-  send: (data: any) => void;
-  setHeader: (name: string, value: string) => VercelRes | any;
+  status?: (code: number) => VercelRes;
+  json?: (data: any) => void;
+  send?: (data: any) => void;
+  setHeader?: (name: string, value: string) => VercelRes | any;
 };
+
+export function replyJson(res: VercelRes, code: number, data: any) {
+  if (typeof res.setHeader === 'function') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+  }
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    return (res as any).status(code).json(data);
+  }
+  res.statusCode = code;
+  return res.end(JSON.stringify(data));
+}
 
 export function postHandler(fn: (body: any) => Promise<any>) {
   return async (req: VercelReq, res: VercelRes) => {
-    res.setHeader('Cache-Control', 'no-store');
-
-    if (req.method !== 'POST') {
-      res.setHeader('Allow', 'POST');
-      return res.status(405).json({ error: 'Method Not Allowed' });
-    }
-
-    let body = req.body;
-    if (typeof body === 'string') {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        return res.status(400).json({ error: 'Invalid JSON body' });
-      }
-    }
-
     try {
+      if (req.method !== 'POST') {
+        if (typeof res.setHeader === 'function') {
+          res.setHeader('Allow', 'POST');
+        }
+        return replyJson(res, 405, { error: 'Method Not Allowed' });
+      }
+
+      let body = req.body;
+      if (body === undefined && typeof (req as any).on === 'function') {
+        body = await new Promise((resolve) => {
+          let data = '';
+          req.on('data', chunk => { data += chunk; });
+          req.on('end', () => {
+            try {
+              resolve(data ? JSON.parse(data) : {});
+            } catch {
+              resolve({});
+            }
+          });
+          req.on('error', () => resolve({}));
+        });
+      } else if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          return replyJson(res, 400, { error: 'Invalid JSON body' });
+        }
+      }
+
       const result = await fn(body || {});
-      return res.status(200).json(result);
+      return replyJson(res, 200, result);
     } catch (err: any) {
-      const status = err instanceof HttpError ? err.status : (typeof err?.status === 'number' ? err.status : 500);
+      console.error(err);
+      const status =
+        err instanceof HttpError
+          ? err.status
+          : typeof err?.status === 'number'
+          ? err.status
+          : 500;
       const message = err?.message || 'Internal Server Error';
-      return res.status(status).json({ error: message });
+      return replyJson(res, status, { error: message });
     }
   };
 }

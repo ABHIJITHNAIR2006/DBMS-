@@ -7,7 +7,7 @@ export class HttpError extends Error {
   }
 }
 
-export const getModel = () => process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+export const getModel = () => process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
 function getAiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;

@@ -38,7 +38,7 @@ To deploy ClayStock on Vercel:
    - In your Vercel project settings, navigate to **Settings > Environment Variables**.
    - Add the following environment variable:
      - `GEMINI_API_KEY`: Your Google Gemini API Key (ensure it is enabled for **Production**, **Preview**, and **Development**).
-     - *(Optional)* `GEMINI_MODEL`: Defaults to `gemini-2.5-flash` if not set.
+     - *(Optional)* `GEMINI_MODEL`: Defaults to `gemini-3.8-flash` if not set.
 
 3. **Deploy & Verify**:
    - Trigger a redeployment.
@@ -47,6 +47,6 @@ To deploy ClayStock on Vercel:
      ```json
      {
        "available": true,
-       "model": "gemini-2.5-flash"
+       "model": "gemini-3.8-flash"
      }
      ```

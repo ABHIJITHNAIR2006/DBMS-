@@ -2,7 +2,7 @@ import React from 'react';
 import { motion, HTMLMotionProps } from 'motion/react';
 
 export interface ClayButtonProps extends Omit<HTMLMotionProps<'button'>, 'children'> {
-  variant?: 'primary' | 'mint' | 'peach' | 'secondary' | 'danger';
+  variant?: 'primary' | 'mint' | 'peach' | 'secondary' | 'danger' | 'outline' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
   children: React.ReactNode;
   icon?: React.ReactNode;
@@ -22,7 +22,9 @@ export const ClayButton: React.FC<ClayButtonProps> = ({
     mint: 'clay-btn-mint',
     peach: 'clay-btn-peach',
     secondary: 'clay-btn-secondary',
-    danger: 'clay-btn-danger'
+    danger: 'clay-btn-danger',
+    outline: 'clay-btn-secondary',
+    ghost: 'clay-btn-secondary'
   }[variant];
 
   const sizeClass = {

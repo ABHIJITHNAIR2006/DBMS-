@@ -11,6 +11,7 @@ import { CommandPalette } from './components/nav/CommandPalette';
 import { GuidedTour } from './components/nav/GuidedTour';
 import { FloatingAIChat } from './components/nav/FloatingAIChat';
 import { ClayToastContainer } from './components/clay/ClayToastContainer';
+import { PresentModeModal } from './components/modals/PresentModeModal';
 
 // Pages lazy loaded for fast initial startup and split bundles
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -18,10 +19,15 @@ const ItemsPage = React.lazy(() => import('./pages/ItemsPage').then(m => ({ defa
 const StockPage = React.lazy(() => import('./pages/StockPage').then(m => ({ default: m.StockPage })));
 const PurchasesPage = React.lazy(() => import('./pages/PurchasesPage').then(m => ({ default: m.PurchasesPage })));
 const IssuesPage = React.lazy(() => import('./pages/IssuesPage').then(m => ({ default: m.IssuesPage })));
+const RequisitionsPage = React.lazy(() => import('./pages/RequisitionsPage').then(m => ({ default: m.RequisitionsPage })));
+const ReportsPage = React.lazy(() => import('./pages/ReportsPage').then(m => ({ default: m.ReportsPage })));
+const QrLabelsPage = React.lazy(() => import('./pages/QrLabelsPage').then(m => ({ default: m.QrLabelsPage })));
+const AuditTrailPage = React.lazy(() => import('./pages/AuditTrailPage').then(m => ({ default: m.AuditTrailPage })));
 const SearchPage = React.lazy(() => import('./pages/SearchPage').then(m => ({ default: m.SearchPage })));
 const SuppliersPage = React.lazy(() => import('./pages/SuppliersPage').then(m => ({ default: m.SuppliersPage })));
 const DatabaseLabPage = React.lazy(() => import('./pages/DatabaseLabPage').then(m => ({ default: m.DatabaseLabPage })));
 const AIAssistantPage = React.lazy(() => import('./pages/AIAssistantPage').then(m => ({ default: m.AIAssistantPage })));
+const SettingsPage = React.lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -38,8 +44,9 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isTourOpen, setIsTourOpen] = useState(false);
+  const [isPresentModeOpen, setIsPresentModeOpen] = useState(false);
 
-  // Cross-page state helpers (e.g. Restock shortcut from Dashboard to Purchases)
+  // Cross-page state helpers
   const [purchasePrefill, setPurchasePrefill] = useState<{
     itemId: string;
     quantity?: number;
@@ -48,6 +55,18 @@ function AppContent() {
 
   const [issuePrefillItemId, setIssuePrefillItemId] = useState('');
   const [inspectItemId, setInspectItemId] = useState<string | null>(null);
+
+  // Global Keyboard shortcut for Present Mode (Ctrl+Shift+P)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setIsPresentModeOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Check if first-run tour has been shown
   useEffect(() => {
@@ -86,6 +105,8 @@ function AppContent() {
     } else if (action === 'NEW_ISSUE') {
       setIssuePrefillItemId('');
       setActiveTab('issues');
+    } else if (action === 'NEW_REQUISITION') {
+      setActiveTab('requisitions');
     } else if (action.startsWith('VIEW_ITEM_')) {
       const itemId = action.replace('VIEW_ITEM_', '');
       handleInspectItem(itemId);
@@ -101,6 +122,8 @@ function AppContent() {
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onOpenAIAssistant={() => setActiveTab('ai-assistant')}
         onStartTour={() => setIsTourOpen(true)}
+        onOpenPresentMode={() => setIsPresentModeOpen(true)}
+        onOpenPurchaseWithItem={handleOpenPurchaseWithItem}
       />
 
       <div className="flex-1 flex max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 gap-6 relative">
@@ -108,7 +131,7 @@ function AppContent() {
         <SidebarDock activeTab={activeTab} setActiveTab={setActiveTab} />
 
         {/* Main Page Area */}
-        <main className="flex-1 min-w-0 lg:pl-36 pb-20 lg:pb-12">
+        <main className="flex-1 min-w-0 lg:pl-48 pb-20 lg:pb-12">
           <React.Suspense fallback={<PageLoadingFallback />}>
             {activeTab === 'dashboard' && (
               <ErrorBoundary name="Dashboard Page">
@@ -161,6 +184,30 @@ function AppContent() {
               </ErrorBoundary>
             )}
 
+            {activeTab === 'requisitions' && (
+              <ErrorBoundary name="Requisitions Workflow">
+                <RequisitionsPage />
+              </ErrorBoundary>
+            )}
+
+            {activeTab === 'reports' && (
+              <ErrorBoundary name="Reports & Analytics">
+                <ReportsPage />
+              </ErrorBoundary>
+            )}
+
+            {activeTab === 'qrlabels' && (
+              <ErrorBoundary name="QR Labels Sheet">
+                <QrLabelsPage />
+              </ErrorBoundary>
+            )}
+
+            {activeTab === 'audittrail' && (
+              <ErrorBoundary name="Audit Trail">
+                <AuditTrailPage />
+              </ErrorBoundary>
+            )}
+
             {activeTab === 'search' && (
               <ErrorBoundary name="Search Module">
                 <SearchPage
@@ -187,14 +234,20 @@ function AppContent() {
                 <AIAssistantPage />
               </ErrorBoundary>
             )}
+
+            {activeTab === 'settings' && (
+              <ErrorBoundary name="Settings">
+                <SettingsPage />
+              </ErrorBoundary>
+            )}
           </React.Suspense>
         </main>
       </div>
 
-      {/* Floating AI Chat Bubble (Quick Access from Any Page) */}
+      {/* Floating AI Chat Bubble */}
       <FloatingAIChat />
 
-      {/* Global Command Palette (Cmd/Ctrl + K) */}
+      {/* Global Command Palette */}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
@@ -202,11 +255,18 @@ function AppContent() {
         onTriggerAction={handleTriggerAction}
       />
 
-      {/* 5-Step Guided Tour */}
+      {/* Guided Tour */}
       <GuidedTour
         isOpen={isTourOpen}
         onClose={() => setIsTourOpen(false)}
         setActiveTab={setActiveTab}
+      />
+
+      {/* Competition Presentation Mode Modal */}
+      <PresentModeModal
+        isOpen={isPresentModeOpen}
+        onClose={() => setIsPresentModeOpen(false)}
+        onNavigateTab={setActiveTab}
       />
 
       {/* Clay Bubble Toast Notifications */}

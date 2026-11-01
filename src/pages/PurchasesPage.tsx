@@ -9,7 +9,9 @@ import {
   CheckCircle2,
   Filter,
   Search,
-  AlertCircle
+  AlertCircle,
+  FileText,
+  Download
 } from 'lucide-react';
 import { ClayCard } from '../components/clay/ClayCard';
 import { ClayButton } from '../components/clay/ClayButton';
@@ -20,6 +22,7 @@ import { ClayModal } from '../components/clay/ClayModal';
 import { ClayTooltip } from '../components/clay/ClayTooltip';
 import { useDB } from '../db/store';
 import { dbEngine } from '../db/engine';
+import { generatePurchaseOrderPdf } from '../services/pdfService';
 
 interface PurchasesPageProps {
   initialItemId?: string;
@@ -302,16 +305,53 @@ export const PurchasesPage: React.FC<PurchasesPageProps> = ({
                     ₹{p.Cost.toLocaleString('en-IN')}
                   </td>
                   <td className="py-3.5 px-3 text-right">
-                    <button
-                      onClick={() => {
-                        setPurchaseToDelete(p.PurchaseID);
-                        setDeleteError(null);
-                      }}
-                      className="p-1.5 text-clay-text-muted hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-slate-800 cursor-pointer"
-                      title="Delete purchase order (stock-never-negative check)"
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const contacts = state.SUPPLIER_CONTACT
+                              .filter(c => c.SupplierID === supplier?.SupplierID)
+                              .map(c => c.ContactNo)
+                              .join(', ');
+                            await generatePurchaseOrderPdf({
+                              poNumber: p.PurchaseID,
+                              poDate: p.PurchaseDate,
+                              supplierName: supplier?.SupplierName || p.SupplierID,
+                              street: supplier?.Street || 'Stationery Wholesale Market',
+                              city: city || 'Nashik',
+                              pincode: supplier?.Pincode || '422001',
+                              contacts: contacts || '+91 98220 11223',
+                              itemName: item?.ItemName || p.ItemID,
+                              category: item?.Category || 'General',
+                              quantity: p.Quantity,
+                              unitCost: p.Cost / p.Quantity,
+                              totalCost: p.Cost
+                            });
+                            showToast({
+                              title: 'Purchase Order PDF Downloaded',
+                              description: `Official A4 Purchase Order ${p.PurchaseID} generated successfully.`,
+                              type: 'success'
+                            });
+                          } catch (err: any) {
+                            showToast({ title: 'PDF Generation Error', description: err.message, type: 'error' });
+                          }
+                        }}
+                        className="p-1.5 text-indigo-600 hover:text-indigo-800 rounded-lg hover:bg-indigo-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                        title="Download Official Purchase Order (A4 PDF)"
+                      >
+                        <FileText size={15} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPurchaseToDelete(p.PurchaseID);
+                          setDeleteError(null);
+                        }}
+                        className="p-1.5 text-clay-text-muted hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                        title="Delete purchase order (stock-never-negative check)"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

@@ -1,0 +1,222 @@
+ROLE
+You are a senior full-stack engineer and database specialist. Upgrade the existing "ClayStock - Stationery Management System" (React 19 + TypeScript + Vite, Tailwind, claymorphism UI, 3D hero, Express server.ts with Gemini) from a MICRO project into a competition-winning DBMS MINI project. The audience is engineering faculty judging DBMS depth, practical value, innovation and demo quality, against rival projects (SQL-Arena, ResearchBuddy, Smart Bus Ticket Reservation, CampusReady). The goal is to make the DATABASE the hero: every concept taught in a DBMS course should be visibly, demonstrably used in the app on a real SQL engine.
+
+======================================================
+HARD RULES
+======================================================
+1. Keep the existing look: claymorphism design tokens, light and dark themes, fonts, 3D hero, tilt cards, toasts, command palette, tour. New pages must match this style exactly (same Clay* components, same shadows, same contrast rules: light colors with dark text in light mode, dark colors with light text in dark mode, WCAG AA).
+2. Keep all five original modules (Item, Stock, Purchase, Issue, Search) and the 10 core tables from the project document; extend, never remove. ISSUED_TO gains EmpID and ReqID columns (nullable) so items can be issued to departments OR employees, as in the project objectives.
+3. Do not regress performance. The app previously lagged and showed "Page Unresponsive". Keep all of these: lazy-loaded pages, memoized queries, split contexts, lazy 3D canvas that pauses when off-screen, no box-shadow transitions, no deep-copy of state. If those optimizations are not in the code yet, apply them first. New rule: NO SQL EVER RUNS ON THE MAIN THREAD (see Phase A).
+4. All business data must come from SQL, not from JavaScript aggregation. The UI calls named queries/views/procedures; the DB enforces the rules (constraints and triggers). JS only formats results and maps DB error codes to friendly messages.
+5. Every executed statement is written to the Live SQL Log with: timestamp, statement, parameters, rows returned/affected, execution time in ms, status, and the user who ran it.
+6. Be honest in the UI. Where something is an emulation or simulation (GRANT/REVOKE roles, stored procedures, isolation-level demo), label it with a small "Simulated / Emulated" chip and a tooltip explaining what real MySQL/PostgreSQL would do. Never claim a feature the engine does not truly have.
+7. Gemini API stays server-side only (server.ts). Use one GEMINI_MODEL constant. Never expose the key to the client.
+8. Work in phases A to I in order. After each phase run npm run lint and npm run build, fix errors, and make sure the app still loads before continuing. End with a change report (files changed, new tables/triggers/views/indexes created, bundle sizes).
+
+======================================================
+PHASE A: REAL SQL ENGINE (SQLite via sql.js, in a Web Worker)
+======================================================
+A1. Install sql.js. Create src/db/worker/db.worker.ts (module worker: new Worker(new URL('./db.worker.ts', import.meta.url), { type: 'module' })). Import the WASM with Vite: import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url' and pass locateFile to initSqlJs. The worker owns the Database object. The main thread talks to it through a small typed RPC client (src/db/client.ts) using postMessage with request IDs and promises.
+A2. RPC API: exec(sql, params) returning { columns, rows, rowsAffected, ms }; batch(statements[], { atomic: true }) wrapped in BEGIN/COMMIT/ROLLBACK; callProcedure(name, args); explain(sql) returning EXPLAIN QUERY PLAN rows; exportDb() returning the .sqlite bytes; importDb(bytes); resetToSeed(); introspect() returning tables, columns, PKs, FKs, indexes, triggers and views from sqlite_master and PRAGMAs; createSandbox({ rows }) returning a disposable second in-memory DB id; dropSandbox(id).
+A3. On every connection run PRAGMA foreign_keys = ON. IMPORTANT: db.export() closes and reopens the database and resets pragmas, so re-run PRAGMA foreign_keys = ON immediately after every export. Set PRAGMA user_version = 2 for the new schema.
+A4. Persistence: store the exported .sqlite bytes in IndexedDB (not localStorage), debounced 1 second after the last write, and flushed on visibilitychange (hidden) and pagehide. On startup load from IndexedDB; if missing or invalid, create the schema and seed it.
+A5. React integration: a useSql(sql, params, deps) hook plus a dbVersion counter that increments after every successful write. Active-page hooks refetch (debounced 50 ms) when dbVersion changes. Results of the same query and params are cached per dbVersion. Cancel stale responses.
+A6. Large result grids (over 100 rows) use windowed rendering (small virtualization, e.g. @tanstack/react-virtual) so the main thread never renders thousands of DOM rows.
+A7. Migration: if the old localStorage key claystock_relational_db_v1 exists, show a one-time clay dialog "Import your previous data or start with the new realistic demo dataset?" Import copies the 10 core tables into SQLite. Default is the new demo dataset.
+A8. If WASM fails to load, show a friendly error card with a Retry button and the reason (never a white screen).
+
+======================================================
+PHASE B: EXTENDED SCHEMA (21 TABLES), CONSTRAINTS, VIEWS, TRIGGERS, INDEXES, PROCEDURES
+======================================================
+Keep the 10 core tables exactly as in the project document (ITEM, SUPPLIER, PINCODE_CITY, SUPPLIER_CONTACT, DEPARTMENT, STOCK_BATCH, CONSUMABLE_ITEM, DURABLE_ITEM, SUPPLIES with surrogate PurchaseID, ISSUED_TO with surrogate IssueID). StockQty stays a DERIVED value, never a stored column.
+
+B1. Add 11 extension tables (all in 3NF, ideally BCNF; write the FDs for each table in src/db/fds.ts so the Normalization lab can verify them):
+- EMPLOYEE(EmpID PK, EmpName NOT NULL, Designation NOT NULL, DeptID FK NOT NULL, ManagerID FK to EMPLOYEE NULL [self-reference], Email UNIQUE, Phone)
+- ROLE(RoleName PK, Description)
+- PERMISSION(RoleName FK, Resource, Action, PK = all three)  [Action IN ('READ','CREATE','UPDATE','DELETE','APPROVE','FULFIL','EXPORT')]
+- APP_USER(UserID PK, Username UNIQUE, PasswordHash, Salt, RoleName FK, EmpID FK UNIQUE)
+- REQUISITION(ReqID PK, DeptID FK, EmpID FK, ReqDate, Status CHECK IN ('DRAFT','SUBMITTED','APPROVED','REJECTED','PARTIALLY_FULFILLED','FULFILLED'), ApprovedBy FK to APP_USER NULL, Remarks)
+- REQUISITION_LINE(ReqID FK, LineNo, ItemID FK, QtyRequested CHECK > 0, QtyApproved NULL, PK = (ReqID, LineNo))  [a second weak entity, ON DELETE CASCADE from REQUISITION]
+- AUDIT_LOG(AuditID INTEGER PK AUTOINCREMENT, TableName, RecordKey, Action CHECK IN ('INSERT','UPDATE','DELETE'), OldValues JSON text, NewValues JSON text, ChangedBy, ChangedAt)
+- ALERT(AlertID PK, ItemID FK, AlertType CHECK IN ('LOW_STOCK','OUT_OF_STOCK','EXPIRING','PRICE_VARIANCE'), Message, CreatedAt, ResolvedAt NULL)
+- PRICE_HISTORY(ItemID FK, ChangedAt, OldPrice, NewPrice, ChangedBy, PK = (ItemID, ChangedAt))
+- PROCEDURE_REGISTRY(ProcName PK, ParamsJson, BodySql, Description)  [emulated stored procedures, see B6]
+- SESSION_CONTEXT(Key PK, Value)  [emulates SESSION_USER()/session variables so triggers know the current app user and department; the app sets 'user', 'role', 'dept' at the start of every write transaction]
+B2. Constraints (use real CHECK, NOT NULL, UNIQUE, FOREIGN KEY with ON DELETE RESTRICT/CASCADE and ON UPDATE CASCADE where sensible): Quantity > 0; Cost >= 0; UnitPrice >= 0; WarrantyPeriod >= 0 (0 = no warranty); ReorderLevel >= 0; IssueDate and PurchaseDate not in the future (CHECK date(x) <= date('now')); ISSUED_TO.DeptID NOT NULL, EmpID nullable (and when present the employee must belong to that department, enforced by a trigger).
+B3. Views (the UI reads these; each view is shown with its SQL in the Lab):
+- V_CURRENT_STOCK: one row per item with TotalPurchased, TotalIssued, StockQty (derived), ItemType, ReorderLevel, WarrantyPeriod, status. Reference definition:
+    CREATE VIEW V_CURRENT_STOCK AS
+    SELECT i.ItemID, i.ItemName, i.Category, i.UnitPrice,
+           COALESCE((SELECT SUM(Quantity) FROM SUPPLIES s WHERE s.ItemID = i.ItemID), 0) AS TotalPurchased,
+           COALESCE((SELECT SUM(Quantity) FROM ISSUED_TO t WHERE t.ItemID = i.ItemID), 0) AS TotalIssued,
+           COALESCE((SELECT SUM(Quantity) FROM SUPPLIES s WHERE s.ItemID = i.ItemID), 0)
+         - COALESCE((SELECT SUM(Quantity) FROM ISSUED_TO t WHERE t.ItemID = i.ItemID), 0) AS StockQty,
+           c.ReorderLevel, d.WarrantyPeriod,
+           CASE WHEN c.ItemID IS NOT NULL THEN 'Consumable' ELSE 'Durable' END AS ItemType
+    FROM ITEM i
+    LEFT JOIN CONSUMABLE_ITEM c ON c.ItemID = i.ItemID
+    LEFT JOIN DURABLE_ITEM d ON d.ItemID = i.ItemID;
+- V_STOCK_LEDGER: UNION ALL of purchases (IN, positive) and issues (OUT, negative) with a running balance using a window function:
+    SUM(Qty) OVER (PARTITION BY ItemID ORDER BY TxnDate, TxnType, Ref ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS RunningBalance
+- V_LOW_STOCK, V_EXPIRING_BATCHES (next 30 days and already expired), V_DEPT_CONSUMPTION, V_SUPPLIER_SUMMARY, V_ITEM_FULL, V_REORDER_WORKLIST, and V_MY_DEPT_ISSUES (filters by (SELECT Value FROM SESSION_CONTEXT WHERE Key='dept'), showing a view used as a security layer).
+B4. Triggers (real SQLite triggers, each listed in the Lab with a "Fire it" demo button):
+- trg_issue_check_stock BEFORE INSERT ON ISSUED_TO:
+    SELECT RAISE(ABORT, 'INSUFFICIENT_STOCK') WHERE NEW.Quantity > (SELECT StockQty FROM V_CURRENT_STOCK WHERE ItemID = NEW.ItemID);
+- trg_issue_emp_dept BEFORE INSERT ON ISSUED_TO: abort with 'EMPLOYEE_DEPT_MISMATCH' if EmpID is not NULL and that employee's DeptID differs from NEW.DeptID.
+- trg_issue_alert AFTER INSERT ON ISSUED_TO: insert a LOW_STOCK or OUT_OF_STOCK row into ALERT when StockQty <= ReorderLevel and no unresolved alert exists for that item.
+- trg_purchase_resolve_alert AFTER INSERT ON SUPPLIES: set ResolvedAt on open stock alerts for the item once StockQty > ReorderLevel.
+- trg_supplies_delete_guard BEFORE DELETE ON SUPPLIES: abort with 'NEGATIVE_STOCK_GUARD' if removing it would make stock negative (same check for BEFORE UPDATE OF Quantity).
+- trg_price_history AFTER UPDATE OF UnitPrice ON ITEM: insert into PRICE_HISTORY.
+- trg_price_variance AFTER INSERT ON SUPPLIES: insert a PRICE_VARIANCE alert when Cost / Quantity is more than 15% above ITEM.UnitPrice.
+- trg_disjoint_consumable BEFORE INSERT ON CONSUMABLE_ITEM: SELECT RAISE(ABORT, 'DISJOINT_VIOLATION') WHERE EXISTS (SELECT 1 FROM DURABLE_ITEM WHERE ItemID = NEW.ItemID); and the mirror trigger on DURABLE_ITEM. (Enforces the disjoint "d" specialization from the EER diagram. Total participation is checked by sp_add_item and by a self-test.)
+- Audit triggers AFTER INSERT/UPDATE/DELETE on ITEM, SUPPLIER, SUPPLIES, ISSUED_TO, DEPARTMENT, REQUISITION writing json_object(...) of old and new values plus (SELECT Value FROM SESSION_CONTEXT WHERE Key='user') and datetime('now') into AUDIT_LOG.
+B5. Indexes (documented with the query each one serves): idx_supplies_item_date(ItemID, PurchaseDate), idx_issued_item_date(ItemID, IssueDate), idx_issued_dept_date(DeptID, IssueDate), idx_item_category(Category), idx_item_name(ItemName COLLATE NOCASE), idx_audit_table_key(TableName, RecordKey), idx_alert_open(ItemID) WHERE ResolvedAt IS NULL (a partial index), idx_req_status(Status).
+B6. Stored procedures are EMULATED (SQLite has none): a procedure registry of named parameterized scripts executed by the worker inside one transaction. Required: sp_add_item, sp_record_purchase, sp_issue_item, sp_submit_requisition, sp_approve_requisition, sp_fulfil_requisition (see D2, uses SAVEPOINT per line), sp_reset_demo. Every procedure sets SESSION_CONTEXT first, checks PERMISSION, runs its statements, and on any error does ROLLBACK and returns { ok:false, code, message }.
+B7. Error codes: map RAISE messages and SQLite errors to friendly clay toasts and inline form errors: INSUFFICIENT_STOCK ("Only X units available" with a "Reduce to X" button), NEGATIVE_STOCK_GUARD, DISJOINT_VIOLATION, EMPLOYEE_DEPT_MISMATCH, UNIQUE constraint, "FOREIGN KEY constraint failed" (explain which referencing table blocks the delete, using PRAGMA foreign_key_list), CHECK constraint failed.
+
+======================================================
+PHASE C: REALISTIC DEMO DATA (deterministic seed)
+======================================================
+Seed with a deterministic PRNG (fixed seed) so every reset gives identical, believable data. All names are fictional; label the dataset "Demo data (fictional)" in Settings. Organization name is a setting, default "K.K. Wagh Institute of Engineering Education & Research, Nashik".
+
+C1. PINCODE_CITY: 422001, 422003, 422005, 422011, 422013, 422101 -> Nashik; 411002 -> Pune; 400001 -> Mumbai.
+C2. Suppliers (SupplierID, Name, Street, Pincode, contacts [use 2 contacts for some, 3 for one; fictional 10-digit numbers like 9800010001]):
+ S01 Shree Ganesh Stationers, 14 Shalimar Chowk, 422001
+ S02 Nashik Paper Mart, Plot 7 Dwarka Circle, 422011
+ S03 Patil Book Depot, 21 College Road, 422005
+ S04 Sai Office Solutions, 5 Gangapur Road, 422013
+ S05 Deshmukh Traders (Wholesale), 9 Panchavati Market, 422003
+ S06 Mahalaxmi Computers & Peripherals, 3 Nashik Road Station Area, 422101
+ S07 Pune Office Hub, 88 Laxmi Road, 411002
+ S08 Bombay Stationery Wholesale, 12 Crawford Market, 400001
+C3. Departments: D01 Administration, D02 Computer Engineering, D03 Information Technology, D04 Mechanical Engineering, D05 Civil Engineering, D06 Electronics & Telecommunication, D07 Library, D08 Accounts, D09 Examination Cell, D10 Training & Placement, D11 Central Store.
+C4. Employees (EmpID E001...; Name, Designation, Dept, Manager): 
+ Mr. Suresh Pawar, Administrative Officer, D01; Mrs. Vandana Salunke, Office Superintendent, D01 (reports to Pawar);
+ Mr. Amit Jadhav, Store Keeper, D11; Mr. Ganesh Shinde, Store Assistant, D11 (reports to Jadhav);
+ Dr. Sunita Kulkarni, HOD, D02; Prof. Rahul Deshmukh, D02; Prof. Neha Joshi, D02; Mr. Prasad More, Lab Assistant, D02;
+ Dr. Vivek Patil, HOD, D03; Prof. Pooja Gaikwad, D03; Mr. Sagar Bhosale, Lab Assistant, D03;
+ Dr. Anil Chavan, HOD, D04; Prof. Mahesh Kadam, D04; Mr. Dnyaneshwar Gite, Workshop Instructor, D04;
+ Dr. Rekha Bhalerao, HOD, D05; Prof. Tushar Sonawane, D05;
+ Dr. Meena Thakur, HOD, D06; Prof. Kiran Ahire, D06;
+ Mrs. Anita Gosavi, Librarian, D07; Mr. Yogesh Nikam, Library Assistant, D07;
+ Mr. Dattatray Kale, Accountant, D08; Mrs. Shweta Mahajan, Accounts Clerk, D08;
+ Prof. Sandeep Borse, Exam Controller, D09; Ms. Komal Dhumal, Exam Clerk, D09;
+ Prof. Archana Dandekar, T&P Officer, D10.
+ Fill ManagerID so HODs report to Administrative Officer and staff report to their HOD or head (this feeds the recursive-CTE approval-chain query). Emails like firstname.lastname@institute.example.
+C5. Users (password for all demo accounts: Demo@123, stored as salted SHA-256 via WebCrypto): suresh.pawar (ADMIN), amit.jadhav (STORE_KEEPER), sunita.kulkarni (DEPT_HEAD, D02), vivek.patil (DEPT_HEAD, D03), dattatray.kale (ACCOUNTANT), shweta.mahajan (AUDITOR). Roles: ADMIN (everything), STORE_KEEPER (items CRUD, purchases, issues, fulfil requisitions, reports), DEPT_HEAD (raise and approve requisitions for own department, view own-department issues via V_MY_DEPT_ISSUES), ACCOUNTANT (purchases read/create, reports, export), AUDITOR (read-only everywhere including AUDIT_LOG).
+C6. Items (ItemID, name, category, list price in INR [approximate market prices], C = consumable with ReorderLevel, D = durable with WarrantyPeriod in months, B = has expiry batches):
+ Paper & Notebooks:
+  I101 JK Copier A4 Paper 75 GSM (500 sheets) 285 C40 | I102 Double A A4 Paper 80 GSM (500 sheets) 390 C20 | I103 Classmate Long Notebook 172 Pages 78 C60 | I104 Classmate Spiral Notebook 300 Pages 120 C30 | I105 Laboratory Record Book 100 Pages 65 C80 | I106 Answer Booklet 40 Pages (Stitched) 14 C1000 | I107 Post-it Sticky Notes 3x3 inch (100 sheets) 45 C25 | I108 White Chart Paper Sheet 8 C100
+ Writing & Marking:
+  I109 Reynolds Trimax Ball Pen Blue 10 C200 | I110 Reynolds Trimax Ball Pen Black 10 C150 | I111 Cello Butterflow Ball Pen Red 10 C60 | I112 Pilot V5 Hi-Tecpoint Pen Blue 140 C15 | I113 Apsara Platinum Pencil (Pack of 10) 55 C20 | I114 Apsara Non-Dust Eraser 5 C50 | I115 Camlin Permanent Marker Black 30 C40 B | I116 Luxor Whiteboard Marker Blue 32 C60 B | I117 Luxor Whiteboard Marker Black 32 C60 B | I118 Camlin Highlighter Yellow 35 C25 | I119 Faber-Castell Correction Pen 40 C20 B
+ Files & Folders:
+  I120 Solo Box File A4 85 C40 | I121 Lever Arch File A4 110 C20 | I122 Transparent L-Folder A4 (Pack of 12) 95 C15 | I123 Manila Cardboard File Folder 12 C150 | I124 Plastic Spring Clip File 35 C60
+ Office Supplies:
+  I125 Kangaro HD-10D Stapler 120 D6 | I126 Kangaro 24/6 Staple Pins (Box of 1000) 22 C80 | I127 Kangaro DP-600 Hole Punch 310 D6 | I128 Paper Clips Gem Type (Box of 100) 20 C40 | I129 Binder Clips 32 mm (Box of 12) 70 C20 | I130 Fevistik Glue Stick 15 g 25 C40 B | I131 Fevicol MR 125 g 50 C20 B | I132 Stainless Steel Scissors 8 inch 90 D0 | I133 Cello Tape Transparent 1 inch 35 C30 | I134 Brown Packing Tape 2 inch 60 C15 | I135 Stamp Pad Ink Blue 30 ml 45 C15 B | I136 Whiteboard Duster 40 C20 | I137 Desk Organizer 3-Compartment 250 D0 | I138 Push Pins (Box of 50) 30 C25
+ Electronics & Consumables:
+  I139 Casio MJ-120D Plus Desktop Calculator 480 D24 | I140 Casio fx-991EX Scientific Calculator 1250 D24 | I141 HP v236w 32 GB USB Pen Drive 650 D60 | I142 Logitech B100 Optical USB Mouse 350 D36 | I143 Logitech K120 USB Keyboard 720 D36 | I144 Anchor Roma 4-Socket Extension Board 380 D12 | I145 HP 88A Black Toner Cartridge 4200 C3 B | I146 Canon PG-47 Black Ink Cartridge 650 C4 B
+C7. Transactions over the last 12 months relative to today (about 160 purchases, about 420 issues, about 15 requisitions). Purchase cost = quantity x list price x a random 0.88 to 1.00 factor (bulk discount), rounded; a few purchases deliberately 16 to 25 percent above list price to trigger PRICE_VARIANCE alerts. Seasonality: Answer Booklets, Lab Record Books and calculators spike in exam months (Nov-Dec and Apr-May) issued mostly by D09 Examination Cell and the departments; paper reams spike at semester starts (Jan and Jul-Aug); Library mostly issues sticky notes, pens and file folders; Central Store D11 receives purchases and issues to departments. Include the project document's exact example rows: PO1001 (I123 from S01 on 02-Jan-2026, qty 500, cost 4500) and PO1002 (I123 from S01 on 14-Mar-2026, qty 300, cost 2850).
+C8. Guaranteed demo situations: 4 items at or below reorder level, 2 items at zero stock (Pilot V5 Hi-Tecpoint, HP 88A toner), 4 batches expiring within 30 days (markers, stamp ink, Fevicol, Canon ink) plus 1 already expired, 3 dead-stock items with no issues in 90+ days (Binder Clips, Brown Packing Tape, Desk Organizer), 1 item issued to an individual employee (set EmpID) in several rows, requisitions in each status (6 FULFILLED, 3 APPROVED awaiting fulfilment, 3 SUBMITTED, 2 REJECTED, 1 PARTIALLY_FULFILLED with a shortfall). Never allow negative stock. The seed must pass the Self-Test suite (Phase E9).
+
+======================================================
+PHASE D: NEW OPERATIONAL FEATURES
+======================================================
+D1. Login and roles: a clay login screen with the six demo accounts listed as one-click chips (autofill), plus a "Quick switch role" menu in the header so judges can change roles instantly during the demo. Permissions come from the PERMISSION table; unauthorized buttons are disabled with a tooltip, AND the procedures re-check permissions (defence in depth). Label this "Emulated GRANT/REVOKE" with an explanation chip. Include a Permission Matrix view (roles x resources) with an Admin-only editor that edits PERMISSION rows (a live GRANT/REVOKE emulator showing the equivalent MySQL statement).
+D2. Requisition workflow (new "Requisitions" page): a department employee drafts a multi-line requisition (header + REQUISITION_LINE rows), submits it, the department head approves/rejects with quantities, then the store keeper fulfils. sp_fulfil_requisition runs in one transaction and uses a SAVEPOINT per line: lines with enough stock are issued (rows inserted into ISSUED_TO with ReqID), lines that would trigger INSUFFICIENT_STOCK are rolled back to their savepoint and recorded as shortfalls; the status becomes FULFILLED or PARTIALLY_FULFILLED. Show a step-by-step transaction timeline (BEGIN, SAVEPOINT s1, INSERT ..., RELEASE s1, ROLLBACK TO s2, COMMIT) after each fulfilment. Include a status pipeline view (kanban-style clay columns).
+D3. Issue to employee or department: the Issue form takes Department (required) and an optional Employee filtered to that department. Employee-wise issue history appears on the employee card.
+D4. Alerts center (bell in the navbar): reads ALERT rows created by triggers (low stock, out of stock, expiring, price variance), with a "Resolve" action and a "Create purchase" shortcut. Show unresolved count live.
+D5. Audit Trail page (Admin and Auditor only): a filterable table over AUDIT_LOG with before/after JSON diff highlighting (using json_extract in SQL), plus an "Undo this change" button for ITEM updates (runs a compensating UPDATE inside a transaction, which itself creates an audit row).
+D6. Purchase Order printing: from any SUPPLIES row generate a clean A4 Purchase Order PDF (organization header, supplier address and contacts joined from SUPPLIER, PINCODE_CITY and SUPPLIER_CONTACT, line item, totals) with jsPDF loaded lazily. Also generate a Stock Issue Slip PDF from an ISSUED_TO row.
+D7. QR labels: generate a QR code per item (ItemID plus name) with a lightweight QR library loaded lazily; a "Print label sheet" page with a 3x8 grid. The Search page gets a "Scan/enter ItemID" quick lookup box.
+D8. Price history chart per item (from PRICE_HISTORY) and an "Edit price" action that fires the trigger live.
+D9. Reorder worklist: reads V_REORDER_WORKLIST (consumables at or below reorder level, with suggested quantity = max(ReorderLevel*2 - StockQty, 0), preferred supplier = the supplier with the lowest average unit cost for that item, found in SQL with a window function). One click creates a pre-filled purchase.
+
+======================================================
+PHASE E: THE DATABASE LAB (the main differentiator)
+======================================================
+Turn the Database Lab into a tabbed workspace. Each tab is lazy-loaded.
+E1. Live Schema Browser: built from introspect() (sqlite_master, PRAGMA table_info, foreign_key_list, index_list), NOT hardcoded. Interactive relationship graph with PK/FK icons, a row-count badge per table, DDL viewer, and first rows. Keep the hand-drawn EER diagram as its own tab (strong and weak entities, double diamond identifying relationship, multivalued Contact, composite Address, derived StockQty, disjoint Is-a with Consumable and Durable), and extend it with the new entities.
+E2. SQL Workbench: a SQL editor (lightweight, lazy-loaded; syntax highlighting, Ctrl+Enter to run, query history, saved queries). Modes: "Read-only (main DB)" by default, which blocks writes with PRAGMA query_only = ON; and "Sandbox (writes allowed)", which runs against a disposable clone, with a visible banner and a "Discard sandbox" button. Result tabs: Results (virtualized grid, CSV export), Plan (EXPLAIN QUERY PLAN rendered as a tree with SCAN vs SEARCH highlighted and "USING INDEX" or "COVERING INDEX" badges), Timing, and Relational Algebra (see E6).
+E3. Query Library: 40 curated queries on the stationery data, each with: title, the business question, SQL, concept tags, the relational algebra expression, expected insight, and a "Run" and "Open in Workbench" button. Required coverage (minimum counts): selection and projection (3); joins including INNER, LEFT, CROSS and a SELF-JOIN on EMPLOYEE manager (6); GROUP BY, HAVING and aggregates (5); subqueries including scalar, IN, EXISTS, NOT EXISTS and correlated (6); set operations UNION, INTERSECT, EXCEPT (3); window functions RANK, DENSE_RANK, ROW_NUMBER, LAG/LEAD, NTILE and running totals (6); CTEs including a RECURSIVE CTE for the 12-month series with zero-fill and another for the approval chain of command up the manager hierarchy (4); views (3); CASE and date functions (3); JSON functions on AUDIT_LOG (2); and one RELATIONAL DIVISION query ("departments that have been issued items from EVERY category", written with double NOT EXISTS). Reference for the 12-month series:
+    WITH RECURSIVE months(m) AS (
+      SELECT date('now','start of month','-11 months')
+      UNION ALL SELECT date(m,'+1 month') FROM months WHERE m < date('now','start of month'))
+    SELECT m, COALESCE(SUM(t.Quantity),0) AS Issued
+    FROM months LEFT JOIN ISSUED_TO t ON strftime('%Y-%m', t.IssueDate) = strftime('%Y-%m', m)
+    GROUP BY m ORDER BY m;
+E4. Index and Optimizer Lab: a "Generate 50,000 transactions" button that creates a SANDBOX database (never the main one) via a recursive-CTE bulk insert, WITHOUT the secondary indexes. Guided steps: run a query (for example total issued per item in a date range) and show EXPLAIN QUERY PLAN as SCAN plus timing; click "CREATE INDEX idx_issued_item_date"; rerun and show SEARCH USING INDEX (or COVERING INDEX) plus the new timing with a before/after bar chart and the percentage improvement. Also demonstrate a composite index column-order effect, a partial index, and a case where an index is NOT used (function on the column) with the reason. Destroy the sandbox on exit.
+E5. Normalization Lab: keep the before/after stories (SUPPLIER with Pincode -> City split into PINCODE_CITY; SUPPLIES and ISSUED_TO surrogate keys) and add an INTERACTIVE FD TOOL: the user enters attributes and functional dependencies; the app computes attribute closure, candidate keys, minimal cover, then checks 2NF, 3NF and BCNF violations with explanations, offers a decomposition, and tests it for lossless join and dependency preservation. Presets: the original SUPPLIER and the original SUPPLIES designs. Add a "Verify our schema" button that runs the checker over src/db/fds.ts and shows every one of the 21 tables as 1NF / 2NF / 3NF / BCNF with green ticks.
+E6. Relational Algebra view: each Query Library entry has hand-written RA (selection, projection, join, rename, union, difference, division, aggregation) with a rendered query tree. For arbitrary Workbench queries, offer "Generate RA with AI" (Gemini, labelled "AI-generated, verify").
+E7. ACID and Concurrency Lab, with the label "Simulation" where applicable:
+ - Atomicity (REAL): run a multi-statement purchase where the last statement violates a constraint; show BEGIN, the successful statements, the failure, ROLLBACK, and that row counts are unchanged.
+ - Consistency (REAL): attempt violations (negative quantity, orphan FK, over-issue) and show which constraint or trigger rejected each.
+ - Isolation (SIMULATION): two side-by-side "Clerk A" and "Clerk B" panels stepping through a schedule. Mode 1 "Naive design" (a stored StockQty column, read-modify-write) shows a LOST UPDATE. Mode 2 "ClayStock design" (append-only ledger with derived stock plus the check trigger) shows both issues processed correctly and the second rejected when stock runs out. Explain that SQLite serializes writers and what MySQL/PostgreSQL isolation levels (READ COMMITTED, REPEATABLE READ, SERIALIZABLE) would do, plus a small deadlock explanation diagram.
+ - Durability (REAL): "Simulate crash": reload the page and show the data persisted from IndexedDB.
+E8. Backup and Restore (REAL): download the live database as claystock.sqlite (openable in DB Browser for SQLite so judges can verify it is a real database), upload and validate a .sqlite file (user_version and required tables), export a full .sql dump (CREATE statements plus INSERTs, generated from sqlite_master), and named snapshots (save and restore points in IndexedDB).
+E9. Self-Test panel: 25 automated assertions run in SQL with green/red ticks and timing, for example: PRAGMA foreign_key_check returns no rows; no item has negative StockQty; V_CURRENT_STOCK equals the SUM of purchases minus the SUM of issues for every item; every item is in exactly one of CONSUMABLE_ITEM or DURABLE_ITEM (total and disjoint); all triggers exist; the over-issue attempt is rejected inside a rolled-back transaction; an audit row is created for an item update inside a rolled-back transaction; every table is in the FD checker's 3NF list; indexes exist. Show "25/25 passed" as a badge in the Lab header.
+E10. Practice Arena: 15 SQL challenges (easy, medium, hard) on the ClayStock data, auto-graded by comparing the result set of the user's query with a reference query (order-insensitive unless the challenge requires ORDER BY), showing a diff on mismatch, a hint button (Gemini gives a hint without the answer), a timer and local progress badges. Examples: "Find items never issued", "Top 3 departments by issued value", "Items whose stock is below the average stock of their category", "Rank suppliers by total purchase value within each city".
+E11. Triggers and Views gallery: lists all triggers and views from the live schema with their SQL, what they enforce, and a "Fire it" button that performs a safe demo in a rolled-back transaction and shows the effect (for example the over-issue attempt returning INSUFFICIENT_STOCK).
+E12. DBMS Concept Coverage Map (the judge's cheat sheet): a table mapping each DBMS topic to where it appears and a "Show me" button that jumps there: ER and EER modeling; relational model and keys; integrity constraints; normalization 1NF to BCNF; SQL DDL, DML, DQL; DCL (emulated); TCL (BEGIN, COMMIT, ROLLBACK, SAVEPOINT); joins; subqueries; set operations; window functions; CTEs and recursive queries; views; indexes and query optimization (EXPLAIN); triggers; stored procedures (emulated); transactions and ACID; concurrency control (simulated); backup and recovery; relational algebra; security and audit; data warehousing-style reporting.
+
+======================================================
+PHASE F: REPORTS AND ANALYTICS (SQL-driven)
+======================================================
+New Reports page with CSV and PDF export (lazy-loaded). Each report has a "View SQL" toggle:
+F1. Stock valuation: StockQty x weighted average cost (SUM(Cost)/SUM(Quantity) per item) by category, and the last purchase price per item using ROW_NUMBER() OVER (PARTITION BY ItemID ORDER BY PurchaseDate DESC).
+F2. Monthly consumption trend: the recursive-CTE 12-month series per category.
+F3. ABC analysis (Pareto): rank items by issued value, cumulative percentage with SUM() OVER, classify A (first 70%), B (next 20%), C (last 10%) with CASE.
+F4. Dead and slow-moving stock: NOT EXISTS for no issues in 90 days; slow movers by days-since-last-issue with MAX(IssueDate).
+F5. Supplier scorecard: purchase count, total value, average unit cost versus list price (price variance), number of PRICE_VARIANCE alerts, ranked with RANK() OVER.
+F6. Department consumption: V_DEPT_CONSUMPTION with NTILE(4) quartiles and issue value per head (join EMPLOYEE counts).
+F7. Expiry report from V_EXPIRING_BATCHES.
+F8. Demand forecast: 3-month moving average of issues per item with AVG() OVER (ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), a simple trend (this month vs previous), and suggested reorder quantity; Gemini only NARRATES the numbers (see G4).
+F9. Anomaly report: z-score of each month's issued quantity per item against its own history, computed in SQL; flag |z| > 2.5.
+F10. FIFO valuation is optional: if implemented, verify that the valued layers sum exactly to V_CURRENT_STOCK.StockQty for every item and add it as a self-test.
+
+======================================================
+PHASE G: GEMINI AI FEATURES (server-side)
+======================================================
+Add endpoints in server.ts (body size limit 100kb, 25-second timeout, try/catch returning { error }). Send ONLY the schema DDL (from the introspected schema) and aggregated numbers, never bulk rows.
+G1. Ask Your Data (natural language to SQL): the user asks, for example, "Which department used the most A4 paper in the last 6 months?" Gemini returns JSON { sql, explanation, confidence }. Validate in the app before running: exactly one statement; must start with SELECT or WITH; reject PRAGMA, ATTACH, INSERT, UPDATE, DELETE, DROP, ALTER; run only on the READ-ONLY connection (PRAGMA query_only = ON) after a successful EXPLAIN; enforce LIMIT 200. Show the generated SQL (editable), the result table, the query plan, and an "Open in Workbench" button. If SQL fails, send the error back once for an automatic repair attempt, then show the error.
+G2. Explain this SQL / Explain this plan: plain-English explanation of any statement or EXPLAIN output, in the Workbench and the Live SQL Log.
+G3. Schema Reviewer: sends the DDL plus fds.ts; Gemini returns advisory notes (missing indexes, normalization remarks, naming suggestions); shown as "AI suggestions - verify" and never applied automatically.
+G4. Forecast narrator and anomaly explainer: Gemini writes short, plain-language reorder advice and likely causes of flagged anomalies using ONLY the numbers computed by SQL; it must not invent or recompute figures.
+G5. Viva Coach: generates 15 viva questions with model answers from the real schema (flip-card UI), and an "Examiner mode" chat where Gemini plays a strict DBMS examiner who asks follow-ups about this project's design (keys, normalization, triggers, transactions, indexing). Add suggested topics chips.
+G6. Keep the existing Smart Search, Restock Advisor, Item Assistant and chat; upgrade the chat so numeric answers come from Ask Your Data queries (grounded), and show which SQL produced the answer.
+G7. Every AI feature shows a loading shimmer, a friendly error with retry, a disabled state while running, an AbortController timeout, and degrades gracefully when GEMINI_API_KEY is missing (all non-AI features still work).
+
+======================================================
+PHASE H: PRESENTATION AND COMPETITION MODE
+======================================================
+H1. "Present Mode" (button in the navbar and Ctrl+Shift+P): a 7-step scripted demo that performs REAL actions and shows presenter notes in a clay side panel (arrow keys to move, a "Run this step" button on each):
+ 1. Problem and objectives with live KPIs from the views.
+ 2. Over-issue attempt: the trigger blocks it (INSUFFICIENT_STOCK), then show the trigger SQL and the unchanged stock.
+ 3. Requisition from Computer Engineering to fulfilment with SAVEPOINT partial fulfilment and the transaction timeline.
+ 4. Index Lab with 50,000 rows: SCAN to SEARCH and the timing drop.
+ 5. ACID Lab: rollback and the lost-update simulation.
+ 6. Ask Your Data with Gemini producing SQL, then the query plan.
+ 7. Self-Tests 25/25 and the Concept Coverage Map.
+ Before the demo take an automatic snapshot, and offer "Restore pre-demo state" at the end so the data is clean again.
+H2. Landing/Dashboard additions: a "Database at a glance" strip (21 tables, views, triggers, indexes, rows, DB size, last write time, Self-Tests badge), all read from introspect(). Keep the 3D hero.
+H3. Project Dossier export: one button creating a Markdown or PDF document (lazy-loaded) with the problem statement, objectives, modules, ER and relational schema, normalization audit, DDL for views, triggers and indexes, 10 sample queries with outputs, and the concept map, so the team can attach it to the report.
+H4. Settings page: organization name, theme, demo-data label, reset demo data, reset only the audit log, Gemini status check, and the performance indicator (frame rate and DB query time).
+
+======================================================
+PHASE I: PERFORMANCE GUARDRAILS AND ACCEPTANCE TESTS
+======================================================
+I1. Bundles: sql.js and its WASM load only inside the worker; jsPDF, QR library, the SQL editor and chart libraries are dynamic imports. Every new page and Lab tab is a lazy chunk with a clay skeleton fallback. Initial JS for first paint stays small (target under about 250 KB gzip); report chunk sizes.
+I2. The main thread must never block over 50 ms for DB work; the workbench shows a spinner and can cancel (terminate and recreate the worker on cancel for runaway queries, with a 10-second default query timeout).
+I3. Writes: debounce IndexedDB persistence; never serialize the database on every keystroke.
+I4. Run these acceptance checks and fix failures before finishing:
+ - npm install (plain, no legacy-peer-deps), npm run lint and npm run build pass with no errors.
+ - Fresh load seeds the database in under 2 seconds and Self-Tests show 25/25.
+ - Issuing more than available stock is rejected by the TRIGGER (not by JavaScript) and the UI shows "Only X units available".
+ - Deleting an item that has purchases or issues is rejected with the exact referencing tables named.
+ - Role switch to AUDITOR disables all write actions, and calling a write procedure directly as AUDITOR is rejected.
+ - Requisition with one short line gives PARTIALLY_FULFILLED and the other lines are issued.
+ - Index Lab shows a visible plan change and timing improvement.
+ - Backup downloads a file that reopens after upload with identical row counts.
+ - Reload keeps all data (IndexedDB), and "Reset demo data" restores the seed.
+ - Light and dark themes both have readable text on every new page.
+ - Opening any page or Lab tab does not freeze the browser; the 3D hero still pauses when scrolled away.
+I5. Finish with the change report: new files, the list of 21 tables, views, triggers, indexes and procedures created, chunk sizes before and after, and anything you could not complete.

@@ -14,8 +14,14 @@ import {
 } from './types';
 import { INITIAL_DATABASE } from './seed';
 import { appendSqlLog } from './sqlLog';
+import { sqlClient } from './client';
 
 const DB_STORAGE_KEY = 'claystock_relational_db_v1';
+
+function esc(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  return String(val).replace(/'/g, "''");
+}
 
 type DBListener = (state: DatabaseState) => void;
 const listeners: Set<DBListener> = new Set();
@@ -284,41 +290,73 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
     return result;
   }
 
+  // Sync internal cache from SQLite Web Worker engine
+  public syncFromSql(newState: DatabaseState, derivedList?: DerivedStockInfo[]): void {
+    this.state = newState;
+    if (derivedList) {
+      derivedStockCache.set(this.state, derivedList);
+    }
+    listeners.forEach(l => l(this.state));
+  }
+
   // --- ID GENERATORS ---
   public generateNextId(type: 'ITEM' | 'SUPPLIER' | 'DEPARTMENT' | 'PURCHASE' | 'ISSUE'): string {
     switch (type) {
       case 'ITEM': {
         const numbers = this.state.ITEM
-          .map(i => parseInt(i.ItemID.replace(/\D/g, ''), 10))
-          .filter(n => !isNaN(n));
+          .map(i => {
+            const digits = (i.ItemID || '').replace(/\D/g, '');
+            const parsed = parseInt(digits, 10);
+            return Number.isFinite(parsed) ? parsed : 0;
+          });
         const max = numbers.length > 0 ? Math.max(...numbers) : 100;
         return `I${max + 1}`;
       }
       case 'SUPPLIER': {
-        const numbers = this.state.SUPPLIER
-          .map(s => parseInt(s.SupplierID.replace(/\D/g, ''), 10))
-          .filter(n => !isNaN(n));
+        const rawIds = this.state.SUPPLIER.map(s => s.SupplierID || '');
+        const uses3Digits = rawIds.some(id => /^S\d{3,}$/i.test(id));
+        const numbers = rawIds
+          .map(id => {
+            const digits = id.replace(/\D/g, '');
+            const parsed = parseInt(digits, 10);
+            return Number.isFinite(parsed) ? parsed : 0;
+          });
         const max = numbers.length > 0 ? Math.max(...numbers) : 0;
-        return `S${String(max + 1).padStart(2, '0')}`;
+        const nextNum = max + 1;
+        const targetPad = uses3Digits ? 3 : (nextNum >= 100 ? String(nextNum).length : 2);
+        return `S${String(nextNum).padStart(targetPad, '0')}`;
       }
       case 'DEPARTMENT': {
-        const numbers = this.state.DEPARTMENT
-          .map(d => parseInt(d.DeptID.replace(/\D/g, ''), 10))
-          .filter(n => !isNaN(n));
+        const rawIds = this.state.DEPARTMENT.map(d => d.DeptID || '');
+        const uses3Digits = rawIds.some(id => /^D\d{3,}$/i.test(id));
+        const numbers = rawIds
+          .map(id => {
+            const digits = id.replace(/\D/g, '');
+            const parsed = parseInt(digits, 10);
+            return Number.isFinite(parsed) ? parsed : 0;
+          });
         const max = numbers.length > 0 ? Math.max(...numbers) : 0;
-        return `D${String(max + 1).padStart(2, '0')}`;
+        const nextNum = max + 1;
+        const targetPad = uses3Digits ? 3 : (nextNum >= 100 ? String(nextNum).length : 2);
+        return `D${String(nextNum).padStart(targetPad, '0')}`;
       }
       case 'PURCHASE': {
         const numbers = this.state.SUPPLIES
-          .map(p => parseInt(p.PurchaseID.replace(/\D/g, ''), 10))
-          .filter(n => !isNaN(n));
+          .map(p => {
+            const digits = (p.PurchaseID || '').replace(/\D/g, '');
+            const parsed = parseInt(digits, 10);
+            return Number.isFinite(parsed) ? parsed : 0;
+          });
         const max = numbers.length > 0 ? Math.max(...numbers) : 1000;
         return `PO${max + 1}`;
       }
       case 'ISSUE': {
         const numbers = this.state.ISSUED_TO
-          .map(i => parseInt(i.IssueID.replace(/\D/g, ''), 10))
-          .filter(n => !isNaN(n));
+          .map(i => {
+            const digits = (i.IssueID || '').replace(/\D/g, '');
+            const parsed = parseInt(digits, 10);
+            return Number.isFinite(parsed) ? parsed : 0;
+          });
         const max = numbers.length > 0 ? Math.max(...numbers) : 2000;
         return `IS${max + 1}`;
       }
@@ -337,6 +375,17 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
     try {
       const { result, sqlStatements } = action(draft);
       this.commit(draft);
+
+      // Propagate statements to SQLite Web Worker engine
+      const executable = sqlStatements.filter(s => {
+        const t = s.trim();
+        return t && !t.startsWith('--');
+      });
+      if (executable.length > 0) {
+        sqlClient.batch(executable.map(sql => ({ sql }))).catch(err => {
+          console.warn('[SQLite worker write sync warning]', err);
+        });
+      }
 
       appendSqlLog({
         type: 'TRANSACTION',
@@ -372,7 +421,18 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
   }): Item {
     return this.executeTransaction('ADD_ITEM', draft => {
       if (!payload.itemName.trim()) throw new Error('Item name cannot be empty');
+      if (!Number.isFinite(payload.unitPrice) || isNaN(payload.unitPrice)) throw new Error('Unit price must be a valid number');
       if (payload.unitPrice < 0) throw new Error('Unit price cannot be negative');
+      if (payload.type === 'Consumable' && payload.reorderLevel !== undefined) {
+        if (!Number.isInteger(payload.reorderLevel) || payload.reorderLevel < 0) {
+          throw new Error('Reorder level must be an integer ≥ 0');
+        }
+      }
+      if (payload.type === 'Durable' && payload.warrantyPeriod !== undefined) {
+        if (!Number.isInteger(payload.warrantyPeriod) || payload.warrantyPeriod < 0) {
+          throw new Error('Warranty period must be an integer ≥ 0');
+        }
+      }
 
       const newItemId = this.generateNextId('ITEM');
       const newItem: Item = {
@@ -385,7 +445,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.ITEM.push(newItem);
 
       const sqlStatements: string[] = [
-        `INSERT INTO ITEM (ItemID, ItemName, Category, UnitPrice) VALUES ('${newItem.ItemID}', '${newItem.ItemName.replace(/'/g, "''")}', '${newItem.Category}', ${newItem.UnitPrice});`
+        `INSERT INTO ITEM (ItemID, ItemName, Category, UnitPrice) VALUES ('${esc(newItem.ItemID)}', '${esc(newItem.ItemName)}', '${esc(newItem.Category)}', ${newItem.UnitPrice});`
       ];
 
       // EER Disjoint specialization enforcement
@@ -393,13 +453,13 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
         const reorderLevel = payload.reorderLevel ?? 20;
         draft.CONSUMABLE_ITEM.push({ ItemID: newItemId, ReorderLevel: reorderLevel });
         sqlStatements.push(
-          `INSERT INTO CONSUMABLE_ITEM (ItemID, ReorderLevel) VALUES ('${newItemId}', ${reorderLevel});`
+          `INSERT INTO CONSUMABLE_ITEM (ItemID, ReorderLevel) VALUES ('${esc(newItemId)}', ${reorderLevel});`
         );
       } else {
         const warranty = payload.warrantyPeriod ?? 12;
         draft.DURABLE_ITEM.push({ ItemID: newItemId, WarrantyPeriod: warranty });
         sqlStatements.push(
-          `INSERT INTO DURABLE_ITEM (ItemID, WarrantyPeriod) VALUES ('${newItemId}', ${warranty});`
+          `INSERT INTO DURABLE_ITEM (ItemID, WarrantyPeriod) VALUES ('${esc(newItemId)}', ${warranty});`
         );
       }
 
@@ -413,7 +473,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
               ExpiryDate: b.expiryDate
             });
             sqlStatements.push(
-              `INSERT INTO STOCK_BATCH (ItemID, BatchNo, ExpiryDate) VALUES ('${newItemId}', '${b.batchNo}', '${b.expiryDate}');`
+              `INSERT INTO STOCK_BATCH (ItemID, BatchNo, ExpiryDate) VALUES ('${esc(newItemId)}', '${esc(b.batchNo)}', '${esc(b.expiryDate)}');`
             );
           }
         });
@@ -434,18 +494,35 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
     batches?: { batchNo: string; expiryDate: string }[];
   }): Item {
     return this.executeTransaction('UPDATE_ITEM', draft => {
+      if (!payload.itemName.trim()) throw new Error('Item name cannot be empty');
+      if (!Number.isFinite(payload.unitPrice) || isNaN(payload.unitPrice)) throw new Error('Unit price must be a valid number');
+      if (payload.unitPrice < 0) throw new Error('Unit price cannot be negative');
+      if (payload.type === 'Consumable' && payload.reorderLevel !== undefined) {
+        if (!Number.isInteger(payload.reorderLevel) || payload.reorderLevel < 0) {
+          throw new Error('Reorder level must be an integer ≥ 0');
+        }
+      }
+      if (payload.type === 'Durable' && payload.warrantyPeriod !== undefined) {
+        if (!Number.isInteger(payload.warrantyPeriod) || payload.warrantyPeriod < 0) {
+          throw new Error('Warranty period must be an integer ≥ 0');
+        }
+      }
+
       const idx = draft.ITEM.findIndex(i => i.ItemID === payload.itemId);
       if (idx === -1) throw new Error(`Item ${payload.itemId} not found`);
 
+      const trimmedName = payload.itemName.trim();
+      const trimmedCategory = payload.category.trim();
+
       draft.ITEM[idx] = {
         ItemID: payload.itemId,
-        ItemName: payload.itemName.trim(),
-        Category: payload.category.trim(),
+        ItemName: trimmedName,
+        Category: trimmedCategory,
         UnitPrice: Number(payload.unitPrice)
       };
 
       const sqlStatements: string[] = [
-        `UPDATE ITEM SET ItemName = '${payload.itemName.replace(/'/g, "''")}', Category = '${payload.category}', UnitPrice = ${payload.unitPrice} WHERE ItemID = '${payload.itemId}';`
+        `UPDATE ITEM SET ItemName = '${esc(trimmedName)}', Category = '${esc(trimmedCategory)}', UnitPrice = ${payload.unitPrice} WHERE ItemID = '${esc(payload.itemId)}';`
       ];
 
       // Disjoint specialization switch: remove previous, insert new
@@ -456,13 +533,13 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
         const rLevel = payload.reorderLevel ?? 20;
         draft.CONSUMABLE_ITEM.push({ ItemID: payload.itemId, ReorderLevel: rLevel });
         sqlStatements.push(
-          `DELETE FROM DURABLE_ITEM WHERE ItemID = '${payload.itemId}';\nINSERT INTO CONSUMABLE_ITEM (ItemID, ReorderLevel) VALUES ('${payload.itemId}', ${rLevel}) ON CONFLICT (ItemID) DO UPDATE SET ReorderLevel = ${rLevel};`
+          `DELETE FROM DURABLE_ITEM WHERE ItemID = '${esc(payload.itemId)}';\nINSERT INTO CONSUMABLE_ITEM (ItemID, ReorderLevel) VALUES ('${esc(payload.itemId)}', ${rLevel}) ON CONFLICT (ItemID) DO UPDATE SET ReorderLevel = ${rLevel};`
         );
       } else {
         const wPeriod = payload.warrantyPeriod ?? 12;
         draft.DURABLE_ITEM.push({ ItemID: payload.itemId, WarrantyPeriod: wPeriod });
         sqlStatements.push(
-          `DELETE FROM CONSUMABLE_ITEM WHERE ItemID = '${payload.itemId}';\nINSERT INTO DURABLE_ITEM (ItemID, WarrantyPeriod) VALUES ('${payload.itemId}', ${wPeriod}) ON CONFLICT (ItemID) DO UPDATE SET WarrantyPeriod = ${wPeriod};`
+          `DELETE FROM CONSUMABLE_ITEM WHERE ItemID = '${esc(payload.itemId)}';\nINSERT INTO DURABLE_ITEM (ItemID, WarrantyPeriod) VALUES ('${esc(payload.itemId)}', ${wPeriod}) ON CONFLICT (ItemID) DO UPDATE SET WarrantyPeriod = ${wPeriod};`
         );
       }
 
@@ -477,7 +554,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
               ExpiryDate: b.expiryDate
             });
             sqlStatements.push(
-              `INSERT INTO STOCK_BATCH (ItemID, BatchNo, ExpiryDate) VALUES ('${payload.itemId}', '${b.batchNo}', '${b.expiryDate}');`
+              `INSERT INTO STOCK_BATCH (ItemID, BatchNo, ExpiryDate) VALUES ('${esc(payload.itemId)}', '${esc(b.batchNo)}', '${esc(b.expiryDate)}');`
             );
           }
         });
@@ -512,10 +589,10 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
 
       const sqlStatements: string[] = [
         `-- Referential integrity: cascading subclass and weak entity deletions`,
-        `DELETE FROM CONSUMABLE_ITEM WHERE ItemID = '${itemId}';`,
-        `DELETE FROM DURABLE_ITEM WHERE ItemID = '${itemId}';`,
-        `DELETE FROM STOCK_BATCH WHERE ItemID = '${itemId}';`,
-        `DELETE FROM ITEM WHERE ItemID = '${itemId}';`
+        `DELETE FROM CONSUMABLE_ITEM WHERE ItemID = '${esc(itemId)}';`,
+        `DELETE FROM DURABLE_ITEM WHERE ItemID = '${esc(itemId)}';`,
+        `DELETE FROM STOCK_BATCH WHERE ItemID = '${esc(itemId)}';`,
+        `DELETE FROM ITEM WHERE ItemID = '${esc(itemId)}';`
       ];
 
       return { result: undefined, sqlStatements };
@@ -553,7 +630,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.SUPPLIES.push(newPurchase);
 
       const sqlStatements = [
-        `INSERT INTO SUPPLIES (PurchaseID, ItemID, SupplierID, PurchaseDate, Quantity, Cost) VALUES ('${purchaseId}', '${payload.itemId}', '${payload.supplierId}', '${payload.purchaseDate}', ${payload.quantity}, ${payload.cost});`,
+        `INSERT INTO SUPPLIES (PurchaseID, ItemID, SupplierID, PurchaseDate, Quantity, Cost) VALUES ('${esc(purchaseId)}', '${esc(payload.itemId)}', '${esc(payload.supplierId)}', '${esc(payload.purchaseDate)}', ${payload.quantity}, ${payload.cost});`,
         `-- Stock Automatically Increments: Item '${item.ItemName}' Stock +${payload.quantity}`
       ];
 
@@ -577,7 +654,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.SUPPLIES = draft.SUPPLIES.filter(p => p.PurchaseID !== purchaseId);
 
       const sqlStatements = [
-        `DELETE FROM SUPPLIES WHERE PurchaseID = '${purchaseId}';`
+        `DELETE FROM SUPPLIES WHERE PurchaseID = '${esc(purchaseId)}';`
       ];
 
       return { result: undefined, sqlStatements };
@@ -626,7 +703,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.ISSUED_TO.push(newIssue);
 
       const sqlStatements = [
-        `INSERT INTO ISSUED_TO (IssueID, ItemID, DeptID, IssueDate, Quantity) VALUES ('${issueId}', '${payload.itemId}', '${payload.deptId}', '${payload.issueDate}', ${payload.quantity});`,
+        `INSERT INTO ISSUED_TO (IssueID, ItemID, DeptID, IssueDate, Quantity) VALUES ('${esc(issueId)}', '${esc(payload.itemId)}', '${esc(payload.deptId)}', '${esc(payload.issueDate)}', ${payload.quantity});`,
         `-- Stock Automatically Decrements: Item '${item.ItemName}' Stock -${payload.quantity}`
       ];
 
@@ -642,7 +719,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.ISSUED_TO = draft.ISSUED_TO.filter(i => i.IssueID !== issueId);
 
       const sqlStatements = [
-        `DELETE FROM ISSUED_TO WHERE IssueID = '${issueId}';`
+        `DELETE FROM ISSUED_TO WHERE IssueID = '${esc(issueId)}';`
       ];
 
       return { result: undefined, sqlStatements };
@@ -666,7 +743,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       const existingPin = draft.PINCODE_CITY.find(p => p.Pincode === pin);
       if (!existingPin) {
         draft.PINCODE_CITY.push({ Pincode: pin, City: city });
-        sqlStatements.push(`INSERT INTO PINCODE_CITY (Pincode, City) VALUES ('${pin}', '${city.replace(/'/g, "''")}');`);
+        sqlStatements.push(`INSERT INTO PINCODE_CITY (Pincode, City) VALUES ('${esc(pin)}', '${esc(city)}');`);
       }
 
       const supplierId = this.generateNextId('SUPPLIER');
@@ -679,7 +756,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
 
       draft.SUPPLIER.push(newSupplier);
       sqlStatements.push(
-        `INSERT INTO SUPPLIER (SupplierID, SupplierName, Street, Pincode) VALUES ('${supplierId}', '${newSupplier.SupplierName.replace(/'/g, "''")}', '${newSupplier.Street.replace(/'/g, "''")}', '${pin}');`
+        `INSERT INTO SUPPLIER (SupplierID, SupplierName, Street, Pincode) VALUES ('${esc(supplierId)}', '${esc(newSupplier.SupplierName)}', '${esc(newSupplier.Street)}', '${esc(pin)}');`
       );
 
       // Multivalued contacts
@@ -687,7 +764,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
         if (c.trim()) {
           draft.SUPPLIER_CONTACT.push({ SupplierID: supplierId, ContactNo: c.trim() });
           sqlStatements.push(
-            `INSERT INTO SUPPLIER_CONTACT (SupplierID, ContactNo) VALUES ('${supplierId}', '${c.trim()}');`
+            `INSERT INTO SUPPLIER_CONTACT (SupplierID, ContactNo) VALUES ('${esc(supplierId)}', '${esc(c.trim())}');`
           );
         }
       });
@@ -713,11 +790,11 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       const existingPin = draft.PINCODE_CITY.find(p => p.Pincode === pin);
       if (!existingPin) {
         draft.PINCODE_CITY.push({ Pincode: pin, City: city });
-        sqlStatements.push(`INSERT INTO PINCODE_CITY (Pincode, City) VALUES ('${pin}', '${city.replace(/'/g, "''")}');`);
+        sqlStatements.push(`INSERT INTO PINCODE_CITY (Pincode, City) VALUES ('${esc(pin)}', '${esc(city)}');`);
       } else if (city && existingPin.City !== city) {
         // Update city for pincode
         existingPin.City = city;
-        sqlStatements.push(`UPDATE PINCODE_CITY SET City = '${city.replace(/'/g, "''")}' WHERE Pincode = '${pin}';`);
+        sqlStatements.push(`UPDATE PINCODE_CITY SET City = '${esc(city)}' WHERE Pincode = '${esc(pin)}';`);
       }
 
       const idx = draft.SUPPLIER.findIndex(s => s.SupplierID === payload.supplierId);
@@ -731,7 +808,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       };
 
       sqlStatements.push(
-        `UPDATE SUPPLIER SET SupplierName = '${payload.supplierName.replace(/'/g, "''")}', Street = '${payload.street.replace(/'/g, "''")}', Pincode = '${pin}' WHERE SupplierID = '${payload.supplierId}';`
+        `UPDATE SUPPLIER SET SupplierName = '${esc(payload.supplierName.trim())}', Street = '${esc(payload.street.trim())}', Pincode = '${esc(pin)}' WHERE SupplierID = '${esc(payload.supplierId)}';`
       );
 
       // Replace contacts
@@ -740,7 +817,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
         if (c.trim()) {
           draft.SUPPLIER_CONTACT.push({ SupplierID: payload.supplierId, ContactNo: c.trim() });
           sqlStatements.push(
-            `INSERT INTO SUPPLIER_CONTACT (SupplierID, ContactNo) VALUES ('${payload.supplierId}', '${c.trim()}');`
+            `INSERT INTO SUPPLIER_CONTACT (SupplierID, ContactNo) VALUES ('${esc(payload.supplierId)}', '${esc(c.trim())}');`
           );
         }
       });
@@ -764,8 +841,8 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.SUPPLIER = draft.SUPPLIER.filter(s => s.SupplierID !== supplierId);
 
       const sqlStatements = [
-        `DELETE FROM SUPPLIER_CONTACT WHERE SupplierID = '${supplierId}';`,
-        `DELETE FROM SUPPLIER WHERE SupplierID = '${supplierId}';`
+        `DELETE FROM SUPPLIER_CONTACT WHERE SupplierID = '${esc(supplierId)}';`,
+        `DELETE FROM SUPPLIER WHERE SupplierID = '${esc(supplierId)}';`
       ];
 
       return { result: undefined, sqlStatements };
@@ -785,7 +862,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.DEPARTMENT.push(newDept);
 
       const sqlStatements = [
-        `INSERT INTO DEPARTMENT (DeptID, DeptName) VALUES ('${deptId}', '${newDept.DeptName.replace(/'/g, "''")}');`
+        `INSERT INTO DEPARTMENT (DeptID, DeptName) VALUES ('${esc(deptId)}', '${esc(newDept.DeptName)}');`
       ];
 
       return { result: newDept, sqlStatements };
@@ -805,7 +882,7 @@ LEFT JOIN DURABLE_ITEM d ON i.ItemID = d.ItemID;`,
       draft.DEPARTMENT = draft.DEPARTMENT.filter(d => d.DeptID !== deptId);
 
       const sqlStatements = [
-        `DELETE FROM DEPARTMENT WHERE DeptID = '${deptId}';`
+        `DELETE FROM DEPARTMENT WHERE DeptID = '${esc(deptId)}';`
       ];
 
       return { result: undefined, sqlStatements };

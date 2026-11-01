@@ -135,5 +135,50 @@ export const geminiService = {
       'Database Assistant request failed.'
     );
     return data.answer || 'No response generated.';
+  },
+
+  // 5. Ask Your Data (Natural Language to SQL)
+  async askData(prompt: string): Promise<{ sql: string; explanation: string }> {
+    return postJson<{ sql: string; explanation: string }>(
+      '/api/gemini/ask-data',
+      { prompt },
+      'Natural Language to SQL conversion failed.'
+    );
+  },
+
+  // 6. Explain SQL and Query Plan
+  async explainSql(sql: string, plan?: string): Promise<{ explanation: string; optimizations: string[]; raEquivalent: string }> {
+    return postJson<{ explanation: string; optimizations: string[]; raEquivalent: string }>(
+      '/api/gemini/explain-sql',
+      { sql, plan },
+      'SQL explanation failed.'
+    );
+  },
+
+  // 7. Schema Reviewer
+  async reviewSchema(ddl: string, focus?: string): Promise<{ review: string; recommendations: string[]; normalFormRating: string }> {
+    return postJson<{ review: string; recommendations: string[]; normalFormRating: string }>(
+      '/api/gemini/schema-reviewer',
+      { ddl, focus },
+      'Schema review failed.'
+    );
+  },
+
+  // 8. DBMS Viva Coach (Cards)
+  async getVivaCards(): Promise<{ cards: Array<{ id: string; category: string; question: string; answerKey: string; followUp: string }> }> {
+    return postJson<{ cards: Array<{ id: string; category: string; question: string; answerKey: string; followUp: string }> }>(
+      '/api/gemini/viva-coach',
+      { mode: 'cards' },
+      'Viva cards retrieval failed.'
+    );
+  },
+
+  // 9. DBMS Viva Coach (Chat)
+  async chatViva(message: string, history: Array<{ role: 'user' | 'model'; text: string }>): Promise<{ reply: string; score?: number; feedback?: string }> {
+    return postJson<{ reply: string; score?: number; feedback?: string }>(
+      '/api/gemini/viva-coach',
+      { mode: 'chat', message, history },
+      'Viva interrogation failed.'
+    );
   }
 };

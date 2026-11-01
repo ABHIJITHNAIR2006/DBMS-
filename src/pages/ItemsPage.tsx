@@ -13,7 +13,9 @@ import {
   Search,
   ExternalLink,
   ShieldCheck,
-  AlertCircle
+  AlertCircle,
+  History,
+  TrendingUp
 } from 'lucide-react';
 import { ClayCard } from '../components/clay/ClayCard';
 import { ClayButton } from '../components/clay/ClayButton';
@@ -24,6 +26,7 @@ import { ClayModal } from '../components/clay/ClayModal';
 import { ClayTooltip } from '../components/clay/ClayTooltip';
 import { useDB } from '../db/store';
 import { dbEngine } from '../db/engine';
+import { useSql } from '../db/useSql';
 import { queries } from '../db/queries';
 import { Item, ItemType, DerivedStockInfo } from '../db/types';
 import { geminiService } from '../services/gemini';
@@ -58,6 +61,19 @@ export const ItemsPage: React.FC<ItemsPageProps> = ({
     }
     return null;
   });
+
+  interface PriceHistoryRecord {
+    HistoryID: number;
+    OldPrice: number;
+    NewPrice: number;
+    ChangedAt: string;
+    ChangedBy: string;
+  }
+  const { data: priceHistory } = useSql<PriceHistoryRecord>(
+    inspectingItem ? `SELECT HistoryID, OldPrice, NewPrice, ChangedAt, ChangedBy FROM ITEM_PRICE_HISTORY WHERE ItemID = ? ORDER BY ChangedAt DESC;` : '',
+    inspectingItem ? [inspectingItem.item.ItemID] : [],
+    [inspectingItem?.item.ItemID]
+  );
 
   // Delete confirmation modal state
   const [itemToDelete, setItemToDelete] = useState<Item | null>(null);
@@ -170,6 +186,18 @@ export const ItemsPage: React.FC<ItemsPageProps> = ({
     if (!formData.category.trim()) errors.category = 'Category is required';
     if (!formData.unitPrice || isNaN(Number(formData.unitPrice)) || Number(formData.unitPrice) < 0) {
       errors.unitPrice = 'Valid unit price is required (>= 0)';
+    }
+
+    if (formData.type === 'Consumable' && formData.batches.length > 0) {
+      const batchNames = formData.batches.map(b => b.batchNo.trim()).filter(Boolean);
+      const seen = new Set<string>();
+      for (const b of batchNames) {
+        if (seen.has(b)) {
+          errors.batches = 'Duplicate batch numbers are not allowed for an item';
+          break;
+        }
+        seen.add(b);
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -661,7 +689,15 @@ export const ItemsPage: React.FC<ItemsPageProps> = ({
                   variant="secondary"
                   size="sm"
                   onClick={() => {
-                    const nextBatchNum = `B0${formData.batches.length + 1}`;
+                    const existingNums = formData.batches
+                      .map(b => {
+                        const m = b.batchNo.match(/\d+/);
+                        return m ? parseInt(m[0], 10) : 0;
+                      })
+                      .filter(n => Number.isFinite(n));
+                    const maxNum = existingNums.length > 0 ? Math.max(...existingNums) : 0;
+                    const nextNum = maxNum + 1;
+                    const nextBatchNum = `B${String(nextNum).padStart(2, '0')}`;
                     setFormData({
                       ...formData,
                       batches: [...formData.batches, { batchNo: nextBatchNum, expiryDate: '' }]
@@ -671,6 +707,10 @@ export const ItemsPage: React.FC<ItemsPageProps> = ({
                   + Add Batch
                 </ClayButton>
               </div>
+
+              {formErrors.batches && (
+                <p className="text-xs text-rose-500 font-medium">{formErrors.batches}</p>
+              )}
 
               {formData.batches.map((b, idx) => (
                 <div key={idx} className="flex items-center gap-2 mt-2">
@@ -891,6 +931,36 @@ export const ItemsPage: React.FC<ItemsPageProps> = ({
                     )}
                   </div>
                 </div>
+
+                {/* Price History Audit (Trigger: trg_price_history) */}
+                {priceHistory && priceHistory.length > 0 && (
+                  <div className="mt-5">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <History size={14} className="text-indigo-600 dark:text-indigo-400" />
+                      <h4 className="font-display font-bold text-sm text-clay-text">
+                        Price History Audit Trail (Trigger: trg_price_history)
+                      </h4>
+                    </div>
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {priceHistory.map(ph => (
+                        <div
+                          key={ph.HistoryID}
+                          className="clay-card-flat p-2 flex items-center justify-between text-xs bg-white/70 dark:bg-slate-900/70"
+                        >
+                          <div>
+                            <span className="font-mono text-clay-text-muted">{ph.ChangedAt}</span>
+                            <span className="text-[10px] text-clay-text-muted ml-1.5">by {ph.ChangedBy}</span>
+                          </div>
+                          <div className="flex items-center gap-2 font-mono font-bold">
+                            <span className="text-clay-text-muted line-through">₹{ph.OldPrice}</span>
+                            <span>→</span>
+                            <span className="text-emerald-600 dark:text-emerald-400">₹{ph.NewPrice}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* SQL Query Representation */}
                 <div className="mt-6 p-3 rounded-2xl bg-slate-900 text-slate-100 text-[11px] font-mono overflow-x-auto">

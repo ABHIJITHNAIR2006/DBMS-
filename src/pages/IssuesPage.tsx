@@ -9,7 +9,9 @@ import {
   CheckCircle2,
   Search,
   AlertCircle,
-  ArrowRight
+  ArrowRight,
+  FileText,
+  User
 } from 'lucide-react';
 import { ClayCard } from '../components/clay/ClayCard';
 import { ClayButton } from '../components/clay/ClayButton';
@@ -20,7 +22,9 @@ import { ClayModal } from '../components/clay/ClayModal';
 import { ClayTooltip } from '../components/clay/ClayTooltip';
 import { useDB } from '../db/store';
 import { dbEngine } from '../db/engine';
+import { useSql } from '../db/useSql';
 import { queries } from '../db/queries';
+import { generateIssueSlipPdf } from '../services/pdfService';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 
 interface IssuesPageProps {
@@ -93,6 +97,18 @@ export const IssuesPage: React.FC<IssuesPageProps> = ({
     // Stock-Out Prevention Rule
     if (Number(quantity) > availableStock) {
       errors.quantity = `Only ${availableStock} units available in stock. Cannot issue requested ${quantity} units.`;
+      showToast({
+        title: 'Insufficient Stock Trigger',
+        description: `Cannot issue ${quantity} units. Only ${availableStock} available in inventory.`,
+        type: 'warning',
+        action: availableStock > 0 ? {
+          label: `Set to ${availableStock} Units`,
+          onClick: () => {
+            setQuantity(String(availableStock));
+            setFormErrors(prev => ({ ...prev, quantity: '' }));
+          }
+        } : undefined
+      });
     }
 
     if (Object.keys(errors).length > 0) {
@@ -133,7 +149,15 @@ export const IssuesPage: React.FC<IssuesPageProps> = ({
       if (onClearInitial) onClearInitial();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      showToast({ title: 'Transaction Error', description: msg, type: 'error' });
+      showToast({
+        title: 'Transaction Aborted (Trigger RAISE)',
+        description: msg,
+        type: 'error',
+        action: availableStock > 0 ? {
+          label: `Reduce to ${availableStock} Units`,
+          onClick: () => setQuantity(String(availableStock))
+        } : undefined
+      });
     }
   };
 
@@ -282,13 +306,41 @@ export const IssuesPage: React.FC<IssuesPageProps> = ({
                     -{i.Quantity} units
                   </td>
                   <td className="py-3.5 px-3 text-right">
-                    <button
-                      onClick={() => setIssueToDelete(i.IssueID)}
-                      className="p-1.5 text-clay-text-muted hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-slate-800 cursor-pointer"
-                      title="Delete issue transaction"
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={async () => {
+                          try {
+                            await generateIssueSlipPdf({
+                              issueNumber: i.IssueID,
+                              issueDate: i.IssueDate,
+                              deptName: dept?.DeptName || i.DeptID,
+                              empName: 'Department Representative',
+                              itemName: item?.ItemName || i.ItemID,
+                              category: item?.Category || 'General',
+                              quantity: i.Quantity
+                            });
+                            showToast({
+                              title: 'Issue Slip PDF Downloaded',
+                              description: `Official A4 Issue Slip ${i.IssueID} downloaded.`,
+                              type: 'success'
+                            });
+                          } catch (err: any) {
+                            showToast({ title: 'PDF Generation Error', description: err.message, type: 'error' });
+                          }
+                        }}
+                        className="p-1.5 text-indigo-600 hover:text-indigo-800 rounded-lg hover:bg-indigo-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                        title="Download Official Issue Slip (A4 PDF)"
+                      >
+                        <FileText size={15} />
+                      </button>
+                      <button
+                        onClick={() => setIssueToDelete(i.IssueID)}
+                        className="p-1.5 text-clay-text-muted hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                        title="Delete issue transaction"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

@@ -12,6 +12,14 @@ An academic DBMS mini-project demonstrating a 3NF Relational Database Management
   - AI Restock Advisor: Automated procurement suggestions based on inventory levels.
   - AI Item Assistant: Suggests catalog attributes, category, type, and unit prices.
   - AI Database Assistant: Interactive DBMS tutor and viva exam explainer for SQL queries.
+## Simulated User Roles
+
+ClayStock includes role-based access control (RBAC) modeled in the `ROLE` and `PERMISSION` tables, with quick role-switching in the UI header:
+- **ADMIN** (`suresh.pawar`, Administrative Officer): Full access across all 21 tables, schema management, user accounts, and system configuration.
+- **STORE_KEEPER** (`amit.jadhav`, Store Keeper): Manages physical store items, records new supplies (`SUPPLIES`), and fulfills approved requisitions (`ISSUED_TO`).
+- **DEPT_HEAD** (`sunita.kulkarni`, HOD Computer Engg / `vivek.patil`, HOD IT): Drafts and submits departmental requisitions, tracks staff issues, and monitors departmental allocations.
+- **ACCOUNTANT** (`dattatray.kale`, Accountant): Audits supplier billing, views purchase ledgers, and monitors inventory valuation.
+- **AUDITOR** (`shweta.mahajan`, Auditor): Inspects immutable change tracking in `AUDIT_LOG`, price variance alerts in `ALERT`, and enforces ACID audit compliance.
 
 ## Local Development
 
